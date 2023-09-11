@@ -12,13 +12,9 @@ class WorkDensityStatusBarApp(rumps.App):
         super(WorkDensityStatusBarApp, self).__init__("WorkDensity", title="WorkDensity")
 
         self.recorder = record.InputRecorder()
-
-    @rumps.clicked("Start")
-    def start_button(self, _):
         self.recorder.start()
 
-    @rumps.clicked("Stop")
-    def stop_button(self, _):
+    def __del__(self):
         self.recorder.stop()
 
     @rumps.clicked("Plot")
