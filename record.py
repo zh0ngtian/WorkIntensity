@@ -4,11 +4,25 @@ import time
 
 from pynput import keyboard, mouse
 
-if not os.path.exists("log"):
-    os.makedirs("log", exist_ok=False)
-event_log_file = open(f'log/{time.strftime("%Y-%m-%d")}.log', "a+")
-
 event_lock = threading.Lock()
+event_log_file = None
+
+
+def open_log_file():
+    global event_log_file
+
+    file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
+
+    if event_log_file == None:
+        if not os.path.exists("log"):
+            os.makedirs("log", exist_ok=False)
+        event_log_file = open(file_path, "a+")
+
+    if event_log_file.name != file_path:
+        event_log_file.close()
+        event_log_file = open(file_path, "a+")
+
+    return event_log_file
 
 
 def get_current_timestamp():
@@ -18,6 +32,7 @@ def get_current_timestamp():
 # 监听鼠标事件
 def on_mouse_click(x, y, button, pressed):
     with event_lock:
+        event_log_file = open_log_file()
         event_log_file.write(f"[{get_current_timestamp()}] mouse click\n")
         event_log_file.flush()
 
@@ -25,6 +40,7 @@ def on_mouse_click(x, y, button, pressed):
 # 监听键盘事件
 def on_key_press(key):
     with event_lock:
+        event_log_file = open_log_file()
         event_log_file.write(f"[{get_current_timestamp()}] key press\n")
         event_log_file.flush()
 

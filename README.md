@@ -1,7 +1,7 @@
 # Work Intensity
 
 ```bash
-pip3 install rumps pynput
+pip3 install rumps pynput matplotlib
 ```
 
 ```bash
