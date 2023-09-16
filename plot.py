@@ -1,8 +1,10 @@
+import os
 import re
 import time
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 # 定义正则表达式模式，用于匹配时间戳
 timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
@@ -28,13 +30,13 @@ def parse_log_file(file_path):
                 block_index = seconds_since_midnight % (block_duration * blocks_per_period) // block_duration
                 active_block_record[period_index][block_index] = 1
 
-    active_block_counts = [sum(x) for x in active_block_record]
-    return active_block_counts
+    activities_per_hour = [sum(x) for x in active_block_record]
+    return activities_per_hour
 
 
 # 绘制柱状图
-def plot_activity(active_block_counts):
-    x_labels = [
+def do_plot(today_activities_per_hour, last_week_date, last_week_activities_daily):
+    per_hour_labels = [
         "00:00-00:30",
         "00:30-01:00",
         "01:00-01:30",
@@ -84,24 +86,75 @@ def plot_activity(active_block_counts):
         "23:00-23:30",
         "23:30-00:00",
     ]
-    x = range(len(active_block_counts))
 
-    plt.figure(figsize=(15, 5))
-    plt.title("Work Intensity")
-    plt.subplots_adjust(bottom=0.2)  # 调整横坐标标签的纵向显示空间
+    # only show work time: 10:00 - 22:00
+    per_hour_labels = per_hour_labels[20:44]
+    today_activities_per_hour = today_activities_per_hour[20:44]
 
-    plt.bar(x, active_block_counts, tick_label=x_labels)
-    plt.xticks(rotation=90)
-    plt.yticks(range(0, 101, 10))
-    plt.ylim(0, 100)  # 设置纵轴的范围为0到100
+    # 创建一个 matplotlib 图形对象，并分成两个子图
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    # 绘制折线图
+    ax1.set_title("Last Week Work Intensity")
+    ax1.plot(last_week_date, last_week_activities_daily, marker="o", linestyle="-")
+    ax1.set_xticks(range(len(last_week_date)))
+    ax1.set_yticks(range(0, 101, 10))
+    ax1.set_ylim(0, 100)
+
+    # 获取纵轴刻度值并添加虚水平线
+    yticks = ax1.get_yticks()
+    for ytick in yticks:
+        ax1.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
+
+    # 绘制柱状图
+    ax2.set_title("Today Work Intensity")
+    ax2.bar(range(len(today_activities_per_hour)), today_activities_per_hour, tick_label=per_hour_labels)
+    ax2.set_xticks(range(len(today_activities_per_hour)))
+    ax2.set_xticklabels(per_hour_labels, rotation=90)
+    ax2.set_yticks(range(0, 101, 10))
+    ax2.set_ylim(0, 100)
+
+    # 获取纵轴刻度值并添加虚水平线
+    yticks = ax2.get_yticks()
+    for ytick in yticks:
+        ax2.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
+
+    # 调整子图之间的间距
+    plt.tight_layout()
+
+    # 显示图形
     plt.show()
 
 
-def plot_fig(log_file_path):
-    active_periods = parse_log_file(log_file_path)
-    plot_activity(active_periods)
+def get_last_week_activities():
+    today = datetime.now()
+    start_of_last_week = today - timedelta(days=today.weekday() + 2)
+
+    last_week_date = []
+    last_week_activities_daily = []
+    for i in range(7):
+        date = start_of_last_week + timedelta(days=i)
+
+        last_week_date.append(date.strftime("%m-%d"))
+
+        log_file_path = f'log/{date.strftime("%Y-%m-%d")}.log'
+        if os.path.exists(log_file_path):
+            activities_per_hour = parse_log_file(log_file_path)
+            last_week_activities_daily.append(np.sum(activities_per_hour) / 24)
+        else:
+            last_week_activities_daily.append(0)
+
+    return last_week_date, last_week_activities_daily
+
+
+def plot_fig():
+    today_log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
+    today_activities_per_hour = parse_log_file(today_log_file_path)
+
+    last_week_date, last_week_activities_daily = get_last_week_activities()
+
+    do_plot(today_activities_per_hour, last_week_date, last_week_activities_daily)
 
 
 if __name__ == "__main__":
-    log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
-    plot_fig(active_periods)
+    plot_fig()

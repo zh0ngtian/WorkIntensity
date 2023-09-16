@@ -7,9 +7,9 @@ import plot
 import record
 
 
-class WorkDensityStatusBarApp(rumps.App):
+class WorkIntensityStatusBarApp(rumps.App):
     def __init__(self):
-        super(WorkDensityStatusBarApp, self).__init__("WorkDensity", title="WorkDensity")
+        super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title="WorkIntensity")
 
         self.recorder = record.InputRecorder()
         self.recorder.start()
@@ -19,12 +19,11 @@ class WorkDensityStatusBarApp(rumps.App):
 
     @rumps.clicked("Plot")
     def plot_button(self, _):
-        log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
-        p = multiprocessing.Process(target=plot.plot_fig, args=[log_file_path])
+        p = multiprocessing.Process(target=plot.plot_fig)
         p.start()
         p.join()
 
 
 if __name__ == "__main__":
-    app = WorkDensityStatusBarApp()
+    app = WorkIntensityStatusBarApp()
     app.run()
