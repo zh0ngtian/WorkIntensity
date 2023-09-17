@@ -128,7 +128,7 @@ def do_plot(today_activities_per_hour, last_week_date, last_week_activities_dail
 
 def get_last_week_activities():
     today = datetime.now()
-    start_of_last_week = today - timedelta(days=today.weekday() + 2)
+    start_of_last_week = today - timedelta(days=7)
 
     last_week_date = []
     last_week_activities_daily = []
