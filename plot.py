@@ -34,8 +34,21 @@ def parse_log_file(file_path):
     return activities_per_hour
 
 
-# 绘制柱状图
-def do_plot(today_activities_per_hour, last_week_date, last_week_activities_daily):
+def plot_line_fig(last_several_days_date, last_several_days_activities_daily, ax):
+    # 绘制折线图
+    ax.set_title("Last Week Work Intensity")
+    ax.plot(last_several_days_date, last_several_days_activities_daily, marker="o", linestyle="-")
+    ax.set_xticks(range(len(last_several_days_date)))
+    ax.set_yticks(range(0, 101, 10))
+    ax.set_ylim(0, 100)
+
+    # 获取纵轴刻度值并添加虚水平线
+    yticks = ax.get_yticks()
+    for ytick in yticks:
+        ax.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
+
+
+def plot_bar_fig(today_activities_per_hour, ax):
     per_hour_labels = [
         "00:00-00:30",
         "00:30-01:00",
@@ -87,74 +100,145 @@ def do_plot(today_activities_per_hour, last_week_date, last_week_activities_dail
         "23:30-00:00",
     ]
 
-    # only show work time: 10:00 - 22:00
-    per_hour_labels = per_hour_labels[20:44]
-    today_activities_per_hour = today_activities_per_hour[20:44]
-
-    # 创建一个 matplotlib 图形对象，并分成两个子图
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-    # 绘制折线图
-    ax1.set_title("Last Week Work Intensity")
-    ax1.plot(last_week_date, last_week_activities_daily, marker="o", linestyle="-")
-    ax1.set_xticks(range(len(last_week_date)))
-    ax1.set_yticks(range(0, 101, 10))
-    ax1.set_ylim(0, 100)
-
-    # 获取纵轴刻度值并添加虚水平线
-    yticks = ax1.get_yticks()
-    for ytick in yticks:
-        ax1.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
+    # only show work time: 10:00 - 12:00, 14:00 - 18:00, 19:00 - 22:00
+    work_per_hour_labels = per_hour_labels[20:24] + per_hour_labels[28:36] + per_hour_labels[38:44]
+    work_today_activities_per_hour = (
+        today_activities_per_hour[20:24] + today_activities_per_hour[28:36] + today_activities_per_hour[38:44]
+    )
 
     # 绘制柱状图
-    ax2.set_title("Today Work Intensity")
-    ax2.bar(range(len(today_activities_per_hour)), today_activities_per_hour, tick_label=per_hour_labels)
-    ax2.set_xticks(range(len(today_activities_per_hour)))
-    ax2.set_xticklabels(per_hour_labels, rotation=90)
-    ax2.set_yticks(range(0, 101, 10))
-    ax2.set_ylim(0, 100)
+    ax.set_title("Today Work Intensity")
+    ax.bar(range(len(work_today_activities_per_hour)), work_today_activities_per_hour, tick_label=work_per_hour_labels)
+    ax.set_xticks(range(len(work_today_activities_per_hour)))
+    ax.set_xticklabels(work_per_hour_labels, rotation=90)
+    ax.set_yticks(range(0, 101, 10))
+    ax.set_ylim(0, 100)
 
     # 获取纵轴刻度值并添加虚水平线
-    yticks = ax2.get_yticks()
+    yticks = ax.get_yticks()
     for ytick in yticks:
-        ax2.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
-
-    # 调整子图之间的间距
-    plt.tight_layout()
-
-    # 显示图形
-    plt.show()
+        ax.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
 
 
-def get_last_week_activities():
+def plot_grid_fig(last_several_days_data_daily, ylabels, ax):
+    # 定义颜色映射为绿色，根据数值大小分为5个档次
+    cmap = plt.get_cmap("Greens")
+
+    # 创建一个4x7的网格
+    grid = np.array(last_several_days_data_daily).reshape(4, 7)
+
+    # 绘制每个格子
+    for i in range(4):
+        for j in range(7):
+            value = grid[i, j]
+            color = cmap(value / 100)  # 根据数值映射颜色
+            ax.add_patch(plt.Rectangle((j, -i), 1, 1, fc=color, ec="black"))
+            ax.annotate(
+                str(value) + "%" if value > 0 else "",
+                (j + 0.5, -i + 0.5),
+                color="black",
+                fontsize=10,
+                ha="center",
+                va="center",
+            )
+
+    # 设置坐标轴标签
+    ax.set_xticks(np.arange(8))
+    ax.set_yticks(np.arange(-3, 0))
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+
+    # 添加横轴和纵轴的标注文字
+    xlabels = ["Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.", "Sun."]
+    for i in range(4):
+        ax.text(-0.5, -i + 0.5, ylabels[i], ha="center", va="center", fontsize=10)
+    for j in range(7):
+        ax.text(j + 0.5, -3.2, xlabels[j], ha="center", va="center", fontsize=10)
+
+    # 设置标题
+    ax.set_title("Last Month Work Intensity")
+
+
+def get_last_several_days_activities(num_days):
     today = datetime.now()
-    start_of_last_week = today - timedelta(days=7)
+    start_of_last_several_days = today - timedelta(days=num_days - 1)
 
-    last_week_date = []
-    last_week_activities_daily = []
-    for i in range(7):
-        date = start_of_last_week + timedelta(days=i)
+    last_several_days_date = []
+    last_several_days_activities_daily = []
+    for i in range(num_days):
+        date = start_of_last_several_days + timedelta(days=i)
 
-        last_week_date.append(date.strftime("%m-%d"))
+        last_several_days_date.append(date.strftime("%m-%d"))
 
         log_file_path = f'log/{date.strftime("%Y-%m-%d")}.log'
         if os.path.exists(log_file_path):
             activities_per_hour = parse_log_file(log_file_path)
-            last_week_activities_daily.append(np.sum(activities_per_hour) / 24)
+            last_several_days_activities_daily.append(
+                round(np.sum(activities_per_hour) / 18)
+            )  # standard work time is 9 hours
         else:
-            last_week_activities_daily.append(0)
+            last_several_days_activities_daily.append(0)
 
-    return last_week_date, last_week_activities_daily
+    return last_several_days_date, last_several_days_activities_daily
 
 
-def plot_fig():
-    today_log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
+def plot_fig(today_log_file_path=None):
+    if today_log_file_path == None:
+        today_log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
     today_activities_per_hour = parse_log_file(today_log_file_path)
 
-    last_week_date, last_week_activities_daily = get_last_week_activities()
+    num_days = 21 + datetime.today().weekday() + 1
+    last_several_days_data, last_several_days_activities_daily = get_last_several_days_activities(num_days)
 
-    do_plot(today_activities_per_hour, last_week_date, last_week_activities_daily)
+    for i in range(num_days, 28):
+        last_several_days_activities_daily.append(-1)
+    ylabels = [
+        f"{last_several_days_data[0]} - {last_several_days_data[6]}",
+        f"{last_several_days_data[7]} - {last_several_days_data[13]}",
+        f"{last_several_days_data[14]} - {last_several_days_data[20]}",
+        f'{last_several_days_data[21]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}',
+    ]
+
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+    plot_grid_fig(last_several_days_activities_daily, ylabels, ax1)
+    plot_bar_fig(today_activities_per_hour, ax2)
+
+    # 显示图形
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
     plot_fig()
+
+    # data = [
+    #     45,
+    #     60,
+    #     30,
+    #     75,
+    #     90,
+    #     20,
+    #     85,
+    #     10,
+    #     55,
+    #     70,
+    #     40,
+    #     5,
+    #     95,
+    #     50,
+    #     65,
+    #     15,
+    #     80,
+    #     35,
+    #     25,
+    #     100,
+    #     72,
+    #     88,
+    #     42,
+    #     68,
+    #     52,
+    #     62,
+    #     8,
+    #     110,
+    # ]
+    # plot_month_data(data)
