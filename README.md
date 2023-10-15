@@ -3,7 +3,7 @@
 ## 运行方法（仅可用于 macOS）
 
 ```bash
-pip3 install rumps pynput matplotlib
+pip3 install rumps pynput pygetwindow matplotlib
 
 python3 main.py &
 ```
@@ -18,4 +18,3 @@ python3 main.py &
 
 * 将 30 分钟 分成 100 块（每块 18 秒），如果在 18 秒内动过鼠标或者键盘，则认为用户在这一块时间内是活跃的，100 块时间中有 n 块是活跃的，则认为活跃度是 n%
 * 全天活跃度 = 当天活跃的时间块数 / 18。这里在计算全天活跃度的时候没有除以 48（24 x 2），而是使用了工作时间的 9 小时
-
