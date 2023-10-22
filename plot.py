@@ -100,10 +100,10 @@ def plot_bar_fig(today_activities_per_hour, ax):
         "23:30-00:00",
     ]
 
-    # only show work time: 10:00 - 12:00, 14:00 - 18:00, 19:00 - 22:00
-    work_per_hour_labels = per_hour_labels[20:24] + per_hour_labels[28:36] + per_hour_labels[38:44]
+    # only show work time: 10:00 - 12:00, 14:00 - 18:00, 19:00 - 21:30
+    work_per_hour_labels = per_hour_labels[20:24] + per_hour_labels[28:36] + per_hour_labels[38:43]
     work_today_activities_per_hour = (
-        today_activities_per_hour[20:24] + today_activities_per_hour[28:36] + today_activities_per_hour[38:44]
+        today_activities_per_hour[20:24] + today_activities_per_hour[28:36] + today_activities_per_hour[38:43]
     )
 
     # 绘制柱状图
@@ -174,7 +174,7 @@ def get_last_several_days_activities(num_days):
         if os.path.exists(log_file_path):
             activities_per_hour = parse_log_file(log_file_path)
             last_several_days_activities_daily.append(
-                round(np.sum(activities_per_hour) / 18)
+                round(np.sum(activities_per_hour) / 17)
             )  # standard work time is 9 hours
         else:
             last_several_days_activities_daily.append(0)

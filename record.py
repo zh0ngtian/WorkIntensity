@@ -64,7 +64,7 @@ def on_feishu_meeting():
                 event_log_file = open_log_file()
                 event_log_file.write(f"[{get_current_timestamp()}] feishu meeting\n")
                 event_log_file.flush()
-            time.sleep(1)
+            time.sleep(10)
 
 
 class InputRecorder:
