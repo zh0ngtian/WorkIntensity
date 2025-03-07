@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pickle
 
 # 定义正则表达式模式，用于匹配时间戳
 timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
@@ -31,21 +32,8 @@ def parse_log_file(file_path):
                 active_block_record[period_index][block_index] = 1
 
     activities_per_hour = [sum(x) for x in active_block_record]
-    return activities_per_hour
-
-
-def plot_line_fig(last_several_days_date, last_several_days_activities_daily, ax):
-    # 绘制折线图
-    ax.set_title("Last Week Work Intensity")
-    ax.plot(last_several_days_date, last_several_days_activities_daily, marker="o", linestyle="-")
-    ax.set_xticks(range(len(last_several_days_date)))
-    ax.set_yticks(range(0, 101, 10))
-    ax.set_ylim(0, 100)
-
-    # 获取纵轴刻度值并添加虚水平线
-    yticks = ax.get_yticks()
-    for ytick in yticks:
-        ax.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
+    work_intensity_daily = round(np.sum(activities_per_hour) / 17) # standard work time is 9 hours
+    return work_intensity_daily
 
 
 def plot_bar_fig(today_activities_per_hour, ax):
@@ -163,6 +151,13 @@ def get_last_several_days_activities(num_days):
     today = datetime.now()
     start_of_last_several_days = today - timedelta(days=num_days - 1)
 
+    cache_file_path = os.path.join("log/work_intensity_cache.pkl")
+    if os.path.exists(cache_file_path):
+        with open(cache_file_path, "rb") as cache_file:
+            cache = pickle.load(cache_file)
+    else:
+        cache = {}
+
     last_several_days_date = []
     last_several_days_activities_daily = []
     for i in range(num_days):
@@ -172,21 +167,20 @@ def get_last_several_days_activities(num_days):
 
         log_file_path = f'log/{date.strftime("%Y-%m-%d")}.log'
         if os.path.exists(log_file_path):
-            activities_per_hour = parse_log_file(log_file_path)
-            last_several_days_activities_daily.append(
-                round(np.sum(activities_per_hour) / 17)
-            )  # standard work time is 9 hours
+            if log_file_path not in cache:
+                cache[log_file_path] = parse_log_file(log_file_path)
+            last_several_days_activities_daily.append(cache[log_file_path])
         else:
             last_several_days_activities_daily.append(0)
+
+    # 将结果存入缓存
+    with open(cache_file_path, "wb") as cache_file:
+        pickle.dump(cache, cache_file)
 
     return last_several_days_date, last_several_days_activities_daily
 
 
-def plot_fig(today_log_file_path=None):
-    if today_log_file_path == None:
-        today_log_file_path = f'log/{time.strftime("%Y-%m-%d")}.log'
-    today_activities_per_hour = parse_log_file(today_log_file_path)
-
+def plot_fig():
     num_days = 21 + datetime.today().weekday() + 1
     last_several_days_data, last_several_days_activities_daily = get_last_several_days_activities(num_days)
 
@@ -199,9 +193,8 @@ def plot_fig(today_log_file_path=None):
         f'{last_several_days_data[21]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}',
     ]
 
-    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
-    plot_grid_fig(last_several_days_activities_daily, ylabels, ax1)
-    plot_bar_fig(today_activities_per_hour, ax2)
+    _, ax = plt.subplots(figsize=(12, 8))
+    plot_grid_fig(last_several_days_activities_daily, ylabels, ax)
 
     # 显示图形
     plt.tight_layout()
@@ -210,35 +203,3 @@ def plot_fig(today_log_file_path=None):
 
 if __name__ == "__main__":
     plot_fig()
-
-    # data = [
-    #     45,
-    #     60,
-    #     30,
-    #     75,
-    #     90,
-    #     20,
-    #     85,
-    #     10,
-    #     55,
-    #     70,
-    #     40,
-    #     5,
-    #     95,
-    #     50,
-    #     65,
-    #     15,
-    #     80,
-    #     35,
-    #     25,
-    #     100,
-    #     72,
-    #     88,
-    #     42,
-    #     68,
-    #     52,
-    #     62,
-    #     8,
-    #     110,
-    # ]
-    # plot_month_data(data)
