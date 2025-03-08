@@ -8,6 +8,9 @@ import numpy as np
 import pickle
 
 
+plt.rcParams["font.family"] = ["PingFang HK"]
+
+
 timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
 
 
@@ -112,7 +115,7 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
     cmap = plt.get_cmap("Greens")
 
     # 创建一个网格
-    grid = np.array(last_several_days_data_daily).reshape(7, week_number)
+    grid = np.array(last_several_days_data_daily).reshape(week_number, 7).T
 
     # 绘制每个格子
     for i in range(7):
@@ -134,7 +137,7 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
         spine.set_visible(False)
 
     # 隐藏刻度线
-    ax.tick_params(axis='both', which='both', length=0)
+    ax.tick_params(axis="both", which="both", length=0)
 
     # 隐藏坐标轴标签
     ax.set_xticklabels([])
@@ -146,11 +149,11 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
     ax.set_aspect("equal")
 
     # 添加横轴和纵轴的标注文字
-    ylabels = ["Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.", "Sun."]
+    ylabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     for i in range(week_number):
         ax.text(i + 0.5, 1.8, xlabels[i], ha="center", va="center", fontsize=10, rotation=270)
     for j in range(7):
-        ax.text(-0.5, -j + 0.5, ylabels[j], ha="center", va="center", fontsize=10)
+        ax.text(-0.3, -j + 0.5, ylabels[j], ha="center", va="center", fontsize=10)
 
 
 def get_last_several_days_activities(num_days):
@@ -173,9 +176,13 @@ def get_last_several_days_activities(num_days):
 
         log_file_path = f'log/{date.strftime("%Y-%m-%d")}.log'
         if os.path.exists(log_file_path):
-            if log_file_path not in cache:
-                cache[log_file_path] = parse_log_file(log_file_path)
-            last_several_days_activities_daily.append(cache[log_file_path])
+            if date == today:
+                work_intensity_daily = parse_log_file(log_file_path)
+            else:
+                if log_file_path not in cache:
+                    cache[log_file_path] = parse_log_file(log_file_path)
+                work_intensity_daily = cache[log_file_path]
+            last_several_days_activities_daily.append(work_intensity_daily)
         else:
             last_several_days_activities_daily.append(0)
 
@@ -200,7 +207,7 @@ def plot_fig():
         end_date = last_several_days_data[i * 7 + 6]
         xlabels.append(f"{start_date} - {end_date}")
     xlabels.append(
-        f"{last_several_days_data[(week_number - 1) * 7]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime('%m-%d')}"
+        f'{last_several_days_data[(week_number - 1) * 7]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}'
     )
 
     _, ax = plt.subplots(figsize=(20, 7))
