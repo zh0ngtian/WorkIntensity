@@ -7,11 +7,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pickle
 
-# 定义正则表达式模式，用于匹配时间戳
+
 timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
 
 
-# 读取日志文件并解析时间戳
 def parse_log_file(file_path):
     active_block_record = [[0 for _ in range(100)] for _ in range(48)]  # 初始化每个统计周期的活跃块数列表
     block_duration = 18  # 每个统计块的时长
@@ -108,16 +107,16 @@ def plot_bar_fig(today_activities_per_hour, ax):
         ax.axhline(y=ytick, color="gray", linestyle="--", alpha=0.3)
 
 
-def plot_grid_fig(last_several_days_data_daily, ylabels, ax):
-    # 定义颜色映射为绿色，根据数值大小分为5个档次
+def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
+    # 定义颜色映射为绿色，根据数值大小分为 5 个档次
     cmap = plt.get_cmap("Greens")
 
-    # 创建一个4x7的网格
-    grid = np.array(last_several_days_data_daily).reshape(4, 7)
+    # 创建一个网格
+    grid = np.array(last_several_days_data_daily).reshape(7, week_number)
 
     # 绘制每个格子
-    for i in range(4):
-        for j in range(7):
+    for i in range(7):
+        for j in range(week_number):
             value = grid[i, j]
             color = cmap(value / 100)  # 根据数值映射颜色
             ax.add_patch(plt.Rectangle((j, -i), 1, 1, fc=color, ec="black"))
@@ -130,21 +129,28 @@ def plot_grid_fig(last_several_days_data_daily, ylabels, ax):
                 va="center",
             )
 
-    # 设置坐标轴标签
-    ax.set_xticks(np.arange(8))
-    ax.set_yticks(np.arange(-3, 0))
+    # 隐藏边框
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    # 隐藏刻度线
+    ax.tick_params(axis='both', which='both', length=0)
+
+    # 隐藏坐标轴标签
     ax.set_xticklabels([])
     ax.set_yticklabels([])
 
-    # 添加横轴和纵轴的标注文字
-    xlabels = ["Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.", "Sun."]
-    for i in range(4):
-        ax.text(-0.5, -i + 0.5, ylabels[i], ha="center", va="center", fontsize=10)
-    for j in range(7):
-        ax.text(j + 0.5, -3.2, xlabels[j], ha="center", va="center", fontsize=10)
+    # 设置坐标轴比例和范围保证正方形
+    ax.set_xlim(-0.5, week_number + 0.5)
+    ax.set_ylim(-6, 2)
+    ax.set_aspect("equal")
 
-    # 设置标题
-    ax.set_title("Last Month Work Intensity")
+    # 添加横轴和纵轴的标注文字
+    ylabels = ["Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.", "Sun."]
+    for i in range(week_number):
+        ax.text(i + 0.5, 1.8, xlabels[i], ha="center", va="center", fontsize=10, rotation=270)
+    for j in range(7):
+        ax.text(-0.5, -j + 0.5, ylabels[j], ha="center", va="center", fontsize=10)
 
 
 def get_last_several_days_activities(num_days):
@@ -181,20 +187,24 @@ def get_last_several_days_activities(num_days):
 
 
 def plot_fig():
-    num_days = 21 + datetime.today().weekday() + 1
+    week_number = 24
+
+    num_days = (week_number - 1) * 7 + datetime.today().weekday() + 1
     last_several_days_data, last_several_days_activities_daily = get_last_several_days_activities(num_days)
 
-    for i in range(num_days, 28):
+    for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
-    ylabels = [
-        f"{last_several_days_data[0]} - {last_several_days_data[6]}",
-        f"{last_several_days_data[7]} - {last_several_days_data[13]}",
-        f"{last_several_days_data[14]} - {last_several_days_data[20]}",
-        f'{last_several_days_data[21]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}',
-    ]
+    xlabels = []
+    for i in range(week_number - 1):
+        start_date = last_several_days_data[i * 7]
+        end_date = last_several_days_data[i * 7 + 6]
+        xlabels.append(f"{start_date} - {end_date}")
+    xlabels.append(
+        f"{last_several_days_data[(week_number - 1) * 7]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime('%m-%d')}"
+    )
 
-    _, ax = plt.subplots(figsize=(12, 8))
-    plot_grid_fig(last_several_days_activities_daily, ylabels, ax)
+    _, ax = plt.subplots(figsize=(20, 7))
+    plot_grid_fig(week_number, last_several_days_activities_daily, xlabels, ax)
 
     # 显示图形
     plt.tight_layout()
