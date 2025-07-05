@@ -15,8 +15,8 @@ timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
 
 
 def parse_log_file(file_path):
-    active_block_record = [[0 for _ in range(100)] for _ in range(48)]  # 初始化每个统计周期的活跃块数列表
-    block_duration = 18  # 每个统计块的时长
+    active_block_record = [[0 for _ in range(100)] for _ in range(24)]  # 初始化每个统计周期的活跃块数列表
+    block_duration = 36  # 每个统计块的时长，单位为秒
     blocks_per_period = 100  # 每个统计周期的块数
     time_format = "%H:%M:%S"  # 时间戳的格式
 
@@ -33,8 +33,8 @@ def parse_log_file(file_path):
                 block_index = seconds_since_midnight % (block_duration * blocks_per_period) // block_duration
                 active_block_record[period_index][block_index] = 1
 
-    activities_per_hour = [sum(x) for x in active_block_record]
-    work_intensity_daily = round(np.sum(activities_per_hour) / 17) # standard work time is 9 hours
+    activities_per_hour = [sum(x) / 100.0 for x in active_block_record]
+    work_intensity_daily = round(sum(activities_per_hour), 1)
     return work_intensity_daily
 
 
@@ -121,10 +121,10 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
     for i in range(7):
         for j in range(week_number):
             value = grid[i, j]
-            color = cmap(value / 100)  # 根据数值映射颜色
+            color = cmap(value / 9)  # 根据数值映射颜色
             ax.add_patch(plt.Rectangle((j, -i), 1, 1, fc=color, ec="black"))
             ax.annotate(
-                str(value) + "%" if value > 0 else "",
+                str(value) + "h" if value > 0 else "",
                 (j + 0.5, -i + 0.5),
                 color="black",
                 fontsize=10,
@@ -219,4 +219,4 @@ def plot_fig():
 
 
 if __name__ == "__main__":
-    plot_fig()
+    parse_log_file("log/2025-07-05.log")
