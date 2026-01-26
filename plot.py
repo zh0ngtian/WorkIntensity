@@ -8,7 +8,8 @@ import numpy as np
 import pickle
 
 
-plt.rcParams["font.family"] = ["PingFang HK"]
+plt.rcParams["font.sans-serif"] = [".PingFang SC", "PingFang HK", "Arial Unicode MS"] + plt.rcParams["font.sans-serif"]
+plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
 
 
 timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
@@ -128,6 +129,7 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
                 (j + 0.5, -i + 0.5),
                 color="black",
                 fontsize=10,
+                weight="bold",
                 ha="center",
                 va="center",
             )
@@ -151,9 +153,9 @@ def plot_grid_fig(week_number, last_several_days_data_daily, xlabels, ax):
     # 添加横轴和纵轴的标注文字
     ylabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     for i in range(week_number):
-        ax.text(i + 0.5, 1.8, xlabels[i], ha="center", va="center", fontsize=10, rotation=270)
+        ax.text(i + 0.5, 1.8, xlabels[i], ha="center", va="center", fontsize=10, rotation=270, weight="bold")
     for j in range(7):
-        ax.text(-0.3, -j + 0.5, ylabels[j], ha="center", va="center", fontsize=10)
+        ax.text(-0.3, -j + 0.5, ylabels[j], ha="center", va="center", fontsize=10, weight="bold")
 
 
 def get_last_several_days_activities(num_days):
