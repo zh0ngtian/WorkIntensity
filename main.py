@@ -81,6 +81,7 @@ def main():
 
         def _set_status_bar_symbol_icon(self):
             try:
+                import AppKit
                 from AppKit import NSImage
             except Exception:
                 return
@@ -94,7 +95,19 @@ def main():
                 image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
                 if image is None:
                     continue
-                image.setSize_((18, 18))
+                try:
+                    symbol_config = AppKit.NSImageSymbolConfiguration.configurationWithPointSize_weight_scale_(
+                        18, AppKit.NSFontWeightSemibold, AppKit.NSImageSymbolScaleMedium
+                    )
+                    image = image.imageWithSymbolConfiguration_(symbol_config)
+                except Exception:
+                    pass
+
+                try:
+                    thickness = float(AppKit.NSStatusBar.systemStatusBar().thickness())
+                    image.setSize_((max(0.0, thickness - 2.0), max(0.0, thickness - 2.0)))
+                except Exception:
+                    image.setSize_((20, 20))
                 image.setTemplate_(True)
                 self._icon = f"sf-symbol:{symbol_name}"
                 self._icon_nsimage = image
