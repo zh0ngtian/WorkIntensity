@@ -23,3 +23,10 @@ python3 main.py
 * 只要某个 36 秒时间块内出现过一次鼠标/键盘事件（或会议检测事件），就认为该时间块“活跃”
 * 该小时的活跃时长 = 活跃块数 / 100（单位：小时）
 * 当天工作时间（小时）= 24 个小时的活跃时长求和
+
+## 数据存储与 iCloud 备份
+
+程序使用 SQLite 存储活动数据，本地数据库文件位于 `log/work_intensity.sqlite3`。
+
+* 如果开启了 iCloud Drive，会自动备份到 `~/Library/Mobile Documents/com~apple~CloudDocs/WorkIntensity/work_intensity.sqlite3`
+* 当本地数据库缺失且 iCloud 备份存在时，程序会自动从 iCloud 恢复

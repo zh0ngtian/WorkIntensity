@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from datetime import date, datetime
 
 
@@ -9,14 +10,30 @@ _DB_LOCK = threading.Lock()
 _DB_CONN = None
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 _DB_PATH = os.path.join(_LOG_DIR, "work_intensity.sqlite3")
+_ICLOUD_ROOT_DIR = os.path.join(os.path.expanduser("~"), "Library", "Mobile Documents", "com~apple~CloudDocs")
+_ICLOUD_BACKUP_DIR = os.path.join(_ICLOUD_ROOT_DIR, "WorkIntensity")
+_ICLOUD_DB_PATH = os.path.join(_ICLOUD_BACKUP_DIR, "work_intensity.sqlite3")
 _LEGACY_TIMESTAMP_PATTERN = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _LEGACY_LOG_FILE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.log$")
 _BLOCK_DURATION_SECONDS = 36
 _BLOCKS_PER_DAY = 24 * 100
+_ICLOUD_BACKUP_INTERVAL_SECONDS = 300
+_LAST_ICLOUD_BACKUP_AT = 0.0
 
 
 def _ensure_log_dir():
     os.makedirs(_LOG_DIR, exist_ok=True)
+
+
+def _icloud_available():
+    return os.path.isdir(_ICLOUD_ROOT_DIR)
+
+
+def _ensure_icloud_backup_dir():
+    if not _icloud_available():
+        return False
+    os.makedirs(_ICLOUD_BACKUP_DIR, exist_ok=True)
+    return True
 
 
 def _normalize_date(value):
@@ -96,6 +113,7 @@ def get_connection():
     with _DB_LOCK:
         if _DB_CONN is None:
             _ensure_log_dir()
+            _restore_from_icloud_if_needed()
             _DB_CONN = _connect()
         return _DB_CONN
 
@@ -111,6 +129,7 @@ def record_activity(at_time=None):
             "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
             (day, block_index),
         )
+    sync_to_icloud()
 
 
 def _import_legacy_log_if_needed(value):
@@ -186,3 +205,59 @@ def optimize_database():
         conn.execute("PRAGMA wal_checkpoint(FULL)")
         conn.execute("VACUUM")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    sync_to_icloud(force=True)
+
+
+def _restore_from_icloud_if_needed():
+    if os.path.exists(_DB_PATH):
+        return False
+    if not os.path.exists(_ICLOUD_DB_PATH):
+        return False
+
+    source_conn = None
+    target_conn = None
+    try:
+        source_conn = sqlite3.connect(_ICLOUD_DB_PATH)
+        target_conn = sqlite3.connect(_DB_PATH)
+        source_conn.backup(target_conn)
+        return True
+    finally:
+        if target_conn is not None:
+            target_conn.close()
+        if source_conn is not None:
+            source_conn.close()
+
+
+def sync_to_icloud(force=False):
+    global _LAST_ICLOUD_BACKUP_AT
+    if not _ensure_icloud_backup_dir():
+        return False
+
+    now = time.monotonic()
+    if not force and now - _LAST_ICLOUD_BACKUP_AT < _ICLOUD_BACKUP_INTERVAL_SECONDS:
+        return False
+
+    conn = get_connection()
+    backup_path = _ICLOUD_DB_PATH
+    backup_temp_path = backup_path + ".tmp"
+    backup_conn = None
+    try:
+        with _DB_LOCK:
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+            if os.path.exists(backup_temp_path):
+                os.remove(backup_temp_path)
+            backup_conn = sqlite3.connect(backup_temp_path)
+            conn.backup(backup_conn)
+        backup_conn.close()
+        backup_conn = None
+        os.replace(backup_temp_path, backup_path)
+        _LAST_ICLOUD_BACKUP_AT = now
+        return True
+    finally:
+        if backup_conn is not None:
+            backup_conn.close()
+        if os.path.exists(backup_temp_path):
+            try:
+                os.remove(backup_temp_path)
+            except OSError:
+                pass

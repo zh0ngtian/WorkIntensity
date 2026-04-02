@@ -110,6 +110,11 @@ class InputRecorder:
             except Exception as e:
                 _write_record_error(f"feishu_meeting_monitor stop error: {e!r}")
 
+            try:
+                storage.sync_to_icloud(force=True)
+            except Exception as e:
+                _write_record_error(f"icloud backup error: {e!r}")
+
 
 if __name__ == "__main__":
     ir = InputRecorder()
