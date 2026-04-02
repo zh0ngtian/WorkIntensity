@@ -1,172 +1,46 @@
 import os
 import json
-import re
 from datetime import datetime, timedelta
-import pickle
 import webbrowser
 
+import storage
 
-timestamp_pattern = r"\[(\d{2}:\d{2}:\d{2})\]"
+
+def _build_active_block_record(seconds_list, block_duration, period_count, blocks_per_period):
+    active_block_record = [[0 for _ in range(blocks_per_period)] for _ in range(period_count)]
+    seconds_per_period = block_duration * blocks_per_period
+    for seconds_since_midnight in seconds_list:
+        period_index = seconds_since_midnight // seconds_per_period
+        block_index = (seconds_since_midnight % seconds_per_period) // block_duration
+        if 0 <= period_index < period_count and 0 <= block_index < blocks_per_period:
+            active_block_record[period_index][block_index] = 1
+    return active_block_record
 
 
-def parse_log_file(file_path):
-    active_block_record = [[0 for _ in range(100)] for _ in range(24)]
-    block_duration = 36
-    blocks_per_period = 100
-    time_format = "%H:%M:%S"
-
-    with open(file_path, "r") as file:
-        for line in file:
-            match = re.search(timestamp_pattern, line)
-            if match:
-                timestamp_str = match.group(1)
-                timestamp = datetime.strptime(timestamp_str, time_format)
-                seconds_since_midnight = timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second
-                period_index = seconds_since_midnight // (block_duration * blocks_per_period)
-                block_index = seconds_since_midnight % (block_duration * blocks_per_period) // block_duration
-                if 0 <= period_index < 24 and 0 <= block_index < blocks_per_period:
-                    active_block_record[period_index][block_index] = 1
-
+def calculate_daily_work_hours(seconds_list):
+    active_block_record = _build_active_block_record(seconds_list, block_duration=36, period_count=24, blocks_per_period=100)
     activities_per_hour = [sum(x) / 100.0 for x in active_block_record]
-    work_intensity_daily = round(sum(activities_per_hour), 1)
-    return work_intensity_daily
+    return round(sum(activities_per_hour), 1)
 
 
-def parse_log_file_hourly_percent(file_path):
-    active_block_record = [[0 for _ in range(100)] for _ in range(24)]
-    block_duration = 36
-    blocks_per_period = 100
-    time_format = "%H:%M:%S"
-
-    with open(file_path, "r") as file:
-        for line in file:
-            match = re.search(timestamp_pattern, line)
-            if not match:
-                continue
-            timestamp_str = match.group(1)
-            timestamp = datetime.strptime(timestamp_str, time_format)
-            seconds_since_midnight = timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second
-            period_index = seconds_since_midnight // (block_duration * blocks_per_period)
-            block_index = seconds_since_midnight % (block_duration * blocks_per_period) // block_duration
-            if 0 <= period_index < 24 and 0 <= block_index < blocks_per_period:
-                active_block_record[period_index][block_index] = 1
-
+def calculate_hourly_percent(seconds_list):
+    active_block_record = _build_active_block_record(seconds_list, block_duration=36, period_count=24, blocks_per_period=100)
     return [int(sum(x)) for x in active_block_record]
 
 
-PER_HALF_HOUR_LABELS = [
-    "00:00-00:30",
-    "00:30-01:00",
-    "01:00-01:30",
-    "01:30-02:00",
-    "02:00-02:30",
-    "02:30-03:00",
-    "03:00-03:30",
-    "03:30-04:00",
-    "04:00-04:30",
-    "04:30-05:00",
-    "05:00-05:30",
-    "05:30-06:00",
-    "06:00-06:30",
-    "06:30-07:00",
-    "07:00-07:30",
-    "07:30-08:00",
-    "08:00-08:30",
-    "08:30-09:00",
-    "09:00-09:30",
-    "09:30-10:00",
-    "10:00-10:30",
-    "10:30-11:00",
-    "11:00-11:30",
-    "11:30-12:00",
-    "12:00-12:30",
-    "12:30-13:00",
-    "13:00-13:30",
-    "13:30-14:00",
-    "14:00-14:30",
-    "14:30-15:00",
-    "15:00-15:30",
-    "15:30-16:00",
-    "16:00-16:30",
-    "16:30-17:00",
-    "17:00-17:30",
-    "17:30-18:00",
-    "18:00-18:30",
-    "18:30-19:00",
-    "19:00-19:30",
-    "19:30-20:00",
-    "20:00-20:30",
-    "20:30-21:00",
-    "21:00-21:30",
-    "21:30-22:00",
-    "22:00-22:30",
-    "22:30-23:00",
-    "23:00-23:30",
-    "23:30-00:00",
-]
-
-
-def parse_log_file_half_hour_percent(file_path):
-    block_duration = 18
-    blocks_per_period = 100
-    seconds_per_period = block_duration * blocks_per_period
-    period_count = 48
-    time_format = "%H:%M:%S"
-    active_block_record = [[0 for _ in range(blocks_per_period)] for _ in range(period_count)]
-
-    with open(file_path, "r") as file:
-        for line in file:
-            match = re.search(timestamp_pattern, line)
-            if not match:
-                continue
-            timestamp_str = match.group(1)
-            timestamp = datetime.strptime(timestamp_str, time_format)
-            seconds_since_midnight = timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second
-            period_index = seconds_since_midnight // seconds_per_period
-            block_index = (seconds_since_midnight % seconds_per_period) // block_duration
-            if 0 <= period_index < period_count and 0 <= block_index < blocks_per_period:
-                active_block_record[period_index][block_index] = 1
-
-    return [round(sum(x) / blocks_per_period * 100, 1) for x in active_block_record]
-
-
 def get_last_several_days_activities(num_days):
-    today_date = datetime.now().date()
     start_of_last_several_days = datetime.now().date() - timedelta(days=num_days - 1)
-
-    os.makedirs("log", exist_ok=True)
-
-    cache_file_path = os.path.join("log/work_intensity_cache.pkl")
-    if os.path.exists(cache_file_path):
-        with open(cache_file_path, "rb") as cache_file:
-            cache = pickle.load(cache_file)
-    else:
-        cache = {}
-
     last_several_days_date = []
     last_several_days_activities_daily = []
+    day_seconds_map = {}
     for i in range(num_days):
-        date = start_of_last_several_days + timedelta(days=i)
-
-        last_several_days_date.append(date.strftime("%m-%d"))
-
-        log_file_path = f'log/{date.strftime("%Y-%m-%d")}.log'
-        if os.path.exists(log_file_path):
-            if date == today_date:
-                work_intensity_daily = parse_log_file(log_file_path)
-            else:
-                if log_file_path not in cache:
-                    cache[log_file_path] = parse_log_file(log_file_path)
-                work_intensity_daily = cache[log_file_path]
-            last_several_days_activities_daily.append(work_intensity_daily)
-        else:
-            last_several_days_activities_daily.append(0)
-
-    # 将结果存入缓存
-    with open(cache_file_path, "wb") as cache_file:
-        pickle.dump(cache, cache_file)
-
-    return last_several_days_date, last_several_days_activities_daily
+        current_date = start_of_last_several_days + timedelta(days=i)
+        day_key = current_date.strftime("%Y-%m-%d")
+        seconds_list = storage.get_activity_seconds_for_date(current_date)
+        day_seconds_map[day_key] = seconds_list
+        last_several_days_date.append(current_date.strftime("%m-%d"))
+        last_several_days_activities_daily.append(calculate_daily_work_hours(seconds_list) if seconds_list else 0)
+    return last_several_days_date, last_several_days_activities_daily, day_seconds_map
 
 
 def plot_fig():
@@ -174,19 +48,12 @@ def plot_fig():
     today_date = datetime.today().date()
 
     num_days = (week_number - 1) * 7 + datetime.today().weekday() + 1
-    last_several_days_data, last_several_days_activities_daily = get_last_several_days_activities(num_days)
+    last_several_days_data, last_several_days_activities_daily, day_seconds_map = get_last_several_days_activities(num_days)
 
     for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
 
     start_date = datetime.now().date() - timedelta(days=num_days - 1)
-    hourly_cache_file_path = os.path.join("log/work_intensity_hourly_cache.pkl")
-    if os.path.exists(hourly_cache_file_path):
-        with open(hourly_cache_file_path, "rb") as cache_file:
-            hourly_cache = pickle.load(cache_file)
-    else:
-        hourly_cache = {}
-
     xlabels = []
     for i in range(week_number - 1):
         start_label = last_several_days_data[i * 7]
@@ -204,25 +71,11 @@ def plot_fig():
             if value is None or value < 0:
                 continue
             cell_date = start_date + timedelta(days=week_index * 7 + day_index)
-            log_file_path = f'log/{cell_date.strftime("%Y-%m-%d")}.log'
-            if os.path.exists(log_file_path):
-                if cell_date == today_date:
-                    hourly_percent = parse_log_file_hourly_percent(log_file_path)
-                    hourly_cache[log_file_path] = hourly_percent
-                else:
-                    if log_file_path not in hourly_cache:
-                        hourly_cache[log_file_path] = parse_log_file_hourly_percent(log_file_path)
-                    hourly_percent = hourly_cache[log_file_path]
-            else:
-                hourly_percent = [0 for _ in range(24)]
-                if log_file_path in hourly_cache and cell_date == today_date:
-                    del hourly_cache[log_file_path]
+            day_key = cell_date.strftime("%Y-%m-%d")
+            hourly_percent = calculate_hourly_percent(day_seconds_map.get(day_key, []))
             heatmap_data.append(
                 [week_index, day_index, value, hourly_percent, cell_date.strftime("%Y-%m-%d"), ylabels[cell_date.weekday()]]
             )
-
-    with open(hourly_cache_file_path, "wb") as cache_file:
-        pickle.dump(hourly_cache, cache_file)
 
     trend_days = min(30, len(last_several_days_data))
     trend_labels = last_several_days_data[-trend_days:]
