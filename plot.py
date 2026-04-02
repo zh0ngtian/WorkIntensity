@@ -181,6 +181,7 @@ def plot_fig():
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
+    trend_start_date = datetime.now().date() - timedelta(days=trend_days - 1)
 
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -205,7 +206,7 @@ def plot_fig():
   <div class="container">
     <div class="panel">
       <div class="top">
-        <p class="title">最近 {week_number} 周活跃度</p>
+        <p class="title">最近 {week_number} 周工作时长</p>
         <div id="contrib"></div>
         <div class="legend">
           <span>少</span>
@@ -338,6 +339,8 @@ def plot_fig():
 
     const trendLabels = {json.dumps(trend_labels, ensure_ascii=False)};
     const trendValues = {json.dumps(trend_values, ensure_ascii=False)};
+    const trendStartDateStr = {json.dumps(trend_start_date.strftime("%Y-%m-%d"), ensure_ascii=False)};
+    const trendStartDate = new Date(trendStartDateStr + 'T00:00:00');
 
     barsChart.setOption({{
       tooltip: {{
@@ -345,7 +348,10 @@ def plot_fig():
         formatter: (params) => {{
           const item = params && params.length ? params[0] : null;
           if (!item) return '';
-          return `${{item.axisValue}}<br/>${{item.data}}h`;
+          const date = new Date(trendStartDate.getTime() + item.dataIndex * 24 * 3600 * 1000);
+          const iso = date.toISOString().slice(0, 10);
+          const weekday = weekdayNames[date.getDay()] || '';
+          return `${{iso}} ${{weekday}}<br/>${{item.data}}h`;
         }}
       }},
       grid: {{ top: 20, left: 50, right: 20, bottom: 50 }},
