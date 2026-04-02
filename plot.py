@@ -313,7 +313,7 @@ def plot_fig():
     function hourlySparklineSvg(values, dateStr) {{
       const w = 560;
       const h = 190;
-      const leftPad = 36;
+      const leftPad = 46;
       const rightPad = 16;
       const topPad = 16;
       const plotH = 120;
@@ -345,11 +345,11 @@ def plot_fig():
             const cp2Y = y;
             return `${{path}} C ${{cp1X.toFixed(1)}} ${{cp1Y.toFixed(1)}}, ${{cp2X.toFixed(1)}} ${{cp2Y.toFixed(1)}}, ${{x.toFixed(1)}} ${{y.toFixed(1)}}`;
           }}, '');
-      const yTicks = [0, 50, 100].map((t) => {{
+      const yTicks = [0, 25, 50, 75, 100].map((t) => {{
         const y = topPad + (1 - t / 100) * plotH;
         return `<g>
           <line x1="${{leftPad}}" y1="${{y}}" x2="${{w - rightPad}}" y2="${{y}}" stroke="#e5e7eb" stroke-width="1" />
-          <text x="${{leftPad - 8}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}</text>
+          <text x="${{leftPad - 8}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}%</text>
         </g>`;
       }}).join('');
       const xTickHours = Array.from({{length: Math.max(1, endHour - startHour + 1)}}, (_, i) => startHour + i);
