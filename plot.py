@@ -310,9 +310,11 @@ def plot_fig():
     function hourlySparklineSvg(values) {{
       const w = 560;
       const h = 190;
-      const pad = 16;
+      const leftPad = 36;
+      const rightPad = 16;
+      const topPad = 16;
       const plotH = 120;
-      const plotW = w - pad * 2;
+      const plotW = w - leftPad - rightPad;
       const maxV = 100;
       const clamp = (n) => Math.max(0, Math.min(maxV, Number(n) || 0));
       const full = (values && values.length ? values : Array.from({{length: 24}}, () => 0));
@@ -320,29 +322,43 @@ def plot_fig():
       const endHour = 24;
       const sliced = full.slice(startHour, endHour);
       const denom = Math.max(1, sliced.length - 1);
-      const points = sliced.map((v, i) => {{
-        const x = pad + (i / denom) * plotW;
-        const y = pad + (1 - clamp(v) / maxV) * plotH;
-        return `${{x.toFixed(1)}},${{y.toFixed(1)}}`;
-      }}).join(' ');
+      const pointPairs = sliced.map((v, i) => {{
+        const x = leftPad + (i / denom) * plotW;
+        const y = topPad + (1 - clamp(v) / maxV) * plotH;
+        return [x, y];
+      }});
+      const smoothPath = pointPairs.length <= 1
+        ? ''
+        : pointPairs.reduce((path, point, index, points) => {{
+            const [x, y] = point;
+            if (index === 0) {{
+              return `M ${{x.toFixed(1)}} ${{y.toFixed(1)}}`;
+            }}
+            const [prevX, prevY] = points[index - 1];
+            const cp1X = prevX + (x - prevX) / 3;
+            const cp1Y = prevY;
+            const cp2X = x - (x - prevX) / 3;
+            const cp2Y = y;
+            return `${{path}} C ${{cp1X.toFixed(1)}} ${{cp1Y.toFixed(1)}}, ${{cp2X.toFixed(1)}} ${{cp2Y.toFixed(1)}}, ${{x.toFixed(1)}} ${{y.toFixed(1)}}`;
+          }}, '');
       const yTicks = [0, 50, 100].map((t) => {{
-        const y = pad + (1 - t / 100) * plotH;
+        const y = topPad + (1 - t / 100) * plotH;
         return `<g>
-          <line x1="${{pad}}" y1="${{y}}" x2="${{w - pad}}" y2="${{y}}" stroke="#e5e7eb" stroke-width="1" />
-          <text x="${{pad - 6}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}</text>
+          <line x1="${{leftPad}}" y1="${{y}}" x2="${{w - rightPad}}" y2="${{y}}" stroke="#e5e7eb" stroke-width="1" />
+          <text x="${{leftPad - 8}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}</text>
         </g>`;
       }}).join('');
       const xTickHours = Array.from({{length: 15}}, (_, i) => startHour + i);
       const xTicks = xTickHours.map((t) => {{
         const i = (t - startHour);
-        const x = pad + (i / denom) * plotW;
-        return `<text x="${{x}}" y="${{pad + plotH + 28}}" text-anchor="middle" font-size="12" fill="#6b7280">${{t === 24 ? '24' : String(t).padStart(2, '0')}}</text>`;
+        const x = leftPad + (i / denom) * plotW;
+        return `<text x="${{x}}" y="${{topPad + plotH + 28}}" text-anchor="middle" font-size="12" fill="#6b7280">${{t === 24 ? '24' : String(t).padStart(2, '0')}}</text>`;
       }}).join('');
       return `<svg width="${{w}}" height="${{h}}" viewBox="0 0 ${{w}} ${{h}}" xmlns="http://www.w3.org/2000/svg">
         <rect x="0" y="0" width="${{w}}" height="${{h}}" rx="8" fill="#ffffff"></rect>
         ${{yTicks}}
-        <path d="M ${{points.replaceAll(' ', ' L ')}}" fill="none" stroke="#31a354" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
-        <text x="${{w - pad}}" y="${{pad + plotH + 28}}" text-anchor="end" font-size="12" fill="#6b7280"></text>
+        <path d="${{smoothPath}}" fill="none" stroke="#31a354" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <text x="${{w - rightPad}}" y="${{topPad + plotH + 28}}" text-anchor="end" font-size="12" fill="#6b7280"></text>
         ${{xTicks}}
       </svg>`;
     }}
