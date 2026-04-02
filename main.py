@@ -1,18 +1,49 @@
 import multiprocessing
 import os
 import signal
+import subprocess
 import sys
 import time
 
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
 
+def _ensure_required_permissions():
+    missing_permissions = []
+
+    try:
+        import Quartz
+        from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+    except Exception as e:
+        raise RuntimeError(f"无法检查 macOS 权限：{e}") from e
+
+    accessibility_granted = bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}))
+    input_monitoring_granted = bool(Quartz.CGPreflightListenEventAccess())
+
+    if not input_monitoring_granted:
+        input_monitoring_granted = bool(Quartz.CGRequestListenEventAccess())
+
+    if not accessibility_granted:
+        missing_permissions.append("辅助功能")
+    if not input_monitoring_granted:
+        missing_permissions.append("输入监控")
+
+    if missing_permissions:
+        raise RuntimeError(
+            "缺少必要权限："
+            f"{'、'.join(missing_permissions)}。"
+            "请打开“系统设置 → 隐私与安全性”。"
+            "若缺少“辅助功能”权限，请进入“辅助功能”并勾选当前 Python/终端应用；"
+            "若缺少“输入监控”权限，请进入“输入监控”并勾选当前 Python/终端应用；"
+            "授权后完全退出并重新启动程序。"
+        )
+    print("finish check permissions")
+
+
 def _detach_from_terminal_if_possible():
     if os.environ.get(_DAEMONIZED_ENV_KEY) == "1":
         return
     if os.environ.get("WORKINTENSITY_FOREGROUND") == "1":
-        return
-    if not hasattr(os, "fork"):
         return
 
     os.environ[_DAEMONIZED_ENV_KEY] = "1"
@@ -22,44 +53,26 @@ def _detach_from_terminal_if_possible():
     except Exception:
         pass
 
+    script_path = os.path.abspath(__file__)
+    cwd = os.path.dirname(script_path)
+    env = os.environ.copy()
+
     try:
-        pid = os.fork()
-        if pid > 0:
-            os._exit(0)
-    except OSError:
+        with open(os.devnull, "r") as null_in, open(os.devnull, "a+") as null_out:
+            subprocess.Popen(
+                [sys.executable, script_path],
+                cwd=cwd,
+                env=env,
+                stdin=null_in,
+                stdout=null_out,
+                stderr=null_out,
+                start_new_session=True,
+                close_fds=True,
+            )
+        os._exit(0)
+    except Exception:
+        os.environ.pop(_DAEMONIZED_ENV_KEY, None)
         return
-
-    try:
-        os.setsid()
-    except Exception:
-        pass
-
-    try:
-        pid = os.fork()
-        if pid > 0:
-            os._exit(0)
-    except OSError:
-        return
-
-    try:
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    except Exception:
-        pass
-
-    try:
-        sys.stdout.flush()
-        sys.stderr.flush()
-    except Exception:
-        pass
-
-    try:
-        with open(os.devnull, "r") as null_in:
-            os.dup2(null_in.fileno(), sys.stdin.fileno())
-        with open(os.devnull, "a+") as null_out:
-            os.dup2(null_out.fileno(), sys.stdout.fileno())
-            os.dup2(null_out.fileno(), sys.stderr.fileno())
-    except Exception:
-        pass
 
 
 def main():
@@ -124,5 +137,6 @@ def main():
 
 
 if __name__ == "__main__":
+    _ensure_required_permissions()
     _detach_from_terminal_if_possible()
     main()
