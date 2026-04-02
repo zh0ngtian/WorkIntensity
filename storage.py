@@ -2,7 +2,6 @@ import os
 import re
 import sqlite3
 import threading
-import time
 from datetime import date, datetime
 
 
@@ -12,6 +11,8 @@ _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 _DB_PATH = os.path.join(_LOG_DIR, "work_intensity.sqlite3")
 _LEGACY_TIMESTAMP_PATTERN = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _LEGACY_LOG_FILE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.log$")
+_BLOCK_DURATION_SECONDS = 36
+_BLOCKS_PER_DAY = 24 * 100
 
 
 def _ensure_log_dir():
@@ -36,20 +37,57 @@ def _legacy_log_path(value):
     return os.path.join(_LOG_DIR, f"{_date_to_day_key(value)}.log")
 
 
+def _second_to_block_index(second_of_day):
+    return second_of_day // _BLOCK_DURATION_SECONDS
+
+
+def _block_index_to_second(block_index):
+    return block_index * _BLOCK_DURATION_SECONDS
+
+
+def _ensure_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS activity_blocks (
+            day TEXT NOT NULL,
+            block_index INTEGER NOT NULL,
+            PRIMARY KEY (day, block_index)
+        ) WITHOUT ROWID
+        """
+    )
+
+
+def _migrate_from_activity_events_if_needed(conn):
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activity_events'"
+    ).fetchone()
+    if row is None:
+        return False
+
+    has_old_data = conn.execute("SELECT 1 FROM activity_events LIMIT 1").fetchone() is not None
+    if has_old_data:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO activity_blocks(day, block_index)
+            SELECT day, CAST(second_of_day / ? AS INTEGER)
+            FROM activity_events
+            """,
+            (_BLOCK_DURATION_SECONDS,),
+        )
+
+    conn.execute("DROP TABLE activity_events")
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
+    conn.execute("VACUUM")
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return True
+
+
 def _connect():
     conn = sqlite3.connect(_DB_PATH, timeout=30, isolation_level=None, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS activity_events (
-            day TEXT NOT NULL,
-            second_of_day INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            PRIMARY KEY (day, second_of_day)
-        )
-        """
-    )
+    _ensure_tables(conn)
+    _migrate_from_activity_events_if_needed(conn)
     return conn
 
 
@@ -66,12 +104,12 @@ def record_activity(at_time=None):
     now = at_time or datetime.now()
     day = now.strftime("%Y-%m-%d")
     second_of_day = now.hour * 3600 + now.minute * 60 + now.second
-    created_at = int(now.timestamp())
+    block_index = _second_to_block_index(second_of_day)
     conn = get_connection()
     with _DB_LOCK:
         conn.execute(
-            "INSERT OR IGNORE INTO activity_events(day, second_of_day, created_at) VALUES (?, ?, ?)",
-            (day, second_of_day, created_at),
+            "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
+            (day, block_index),
         )
 
 
@@ -79,7 +117,7 @@ def _import_legacy_log_if_needed(value):
     day = _date_to_day_key(value)
     conn = get_connection()
     with _DB_LOCK:
-        row = conn.execute("SELECT 1 FROM activity_events WHERE day = ? LIMIT 1", (day,)).fetchone()
+        row = conn.execute("SELECT 1 FROM activity_blocks WHERE day = ? LIMIT 1", (day,)).fetchone()
         if row is not None:
             return
 
@@ -87,23 +125,23 @@ def _import_legacy_log_if_needed(value):
     if not os.path.exists(legacy_log_path):
         return
 
-    seconds = set()
+    block_indices = set()
     with open(legacy_log_path, "r", encoding="utf-8") as file:
         for line in file:
             match = _LEGACY_TIMESTAMP_PATTERN.search(line)
             if not match:
                 continue
             timestamp = datetime.strptime(match.group(1), "%H:%M:%S")
-            seconds.add(timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second)
+            second_of_day = timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second
+            block_indices.add(_second_to_block_index(second_of_day))
 
-    if not seconds:
+    if not block_indices:
         return
 
-    created_at = int(time.time())
-    rows = [(day, second_of_day, created_at) for second_of_day in sorted(seconds)]
+    rows = [(day, block_index) for block_index in sorted(block_indices)]
     with _DB_LOCK:
         conn.executemany(
-            "INSERT OR IGNORE INTO activity_events(day, second_of_day, created_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
             rows,
         )
 
@@ -114,10 +152,10 @@ def get_activity_seconds_for_date(value):
     conn = get_connection()
     with _DB_LOCK:
         rows = conn.execute(
-            "SELECT second_of_day FROM activity_events WHERE day = ? ORDER BY second_of_day ASC",
+            "SELECT block_index FROM activity_blocks WHERE day = ? ORDER BY block_index ASC",
             (day,),
         ).fetchall()
-    return [row[0] for row in rows]
+    return [_block_index_to_second(row[0]) for row in rows]
 
 
 def import_all_legacy_logs():
@@ -140,3 +178,11 @@ def import_all_legacy_logs():
         "imported_days": imported_days,
         "imported_files": imported_files,
     }
+
+
+def optimize_database():
+    conn = get_connection()
+    with _DB_LOCK:
+        conn.execute("PRAGMA wal_checkpoint(FULL)")
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
