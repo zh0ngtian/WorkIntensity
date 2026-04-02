@@ -7,6 +7,15 @@ import sys
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
 
+def _show_error_dialog(message):
+    title = "WorkIntensity 权限错误"
+    apple_script = f'display alert "{title.replace(chr(34), chr(92) + chr(34))}" message "{message.replace(chr(34), chr(92) + chr(34))}" as critical'
+    try:
+        subprocess.run(["osascript", "-e", apple_script], check=False)
+    except Exception:
+        print(message, file=sys.stderr)
+
+
 def _ensure_required_permissions():
     missing_permissions = []
 
@@ -30,10 +39,10 @@ def _ensure_required_permissions():
     if missing_permissions:
         raise RuntimeError(
             "缺少必要权限："
-            f"{'、'.join(missing_permissions)}。"
-            "请打开“系统设置 → 隐私与安全性”。"
-            "若缺少“辅助功能”权限，请进入“辅助功能”并勾选当前 Python/终端应用；"
-            "若缺少“输入监控”权限，请进入“输入监控”并勾选当前 Python/终端应用；"
+            f"{'、'.join(missing_permissions)}。\n"
+            "请打开「系统设置 → 隐私与安全性」。\n\n"
+            "若缺少「辅助功能」权限，请进入「辅助功能」并勾选当前终端应用；\n\n"
+            "若缺少「输入监控」权限，请进入「输入监控」并勾选当前终端应用；\n\n"
             "授权后完全退出并重新启动程序。"
         )
 
@@ -135,6 +144,10 @@ def main():
 
 
 if __name__ == "__main__":
-    _ensure_required_permissions()
-    _detach_from_terminal_if_possible()
-    main()
+    try:
+        _ensure_required_permissions()
+        _detach_from_terminal_if_possible()
+        main()
+    except RuntimeError as e:
+        _show_error_dialog(str(e))
+        sys.exit(1)
