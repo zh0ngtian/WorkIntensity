@@ -32,6 +32,28 @@ def parse_log_file(file_path):
     return work_intensity_daily
 
 
+def parse_log_file_hourly_percent(file_path):
+    active_block_record = [[0 for _ in range(100)] for _ in range(24)]
+    block_duration = 36
+    blocks_per_period = 100
+    time_format = "%H:%M:%S"
+
+    with open(file_path, "r") as file:
+        for line in file:
+            match = re.search(timestamp_pattern, line)
+            if not match:
+                continue
+            timestamp_str = match.group(1)
+            timestamp = datetime.strptime(timestamp_str, time_format)
+            seconds_since_midnight = timestamp.hour * 3600 + timestamp.minute * 60 + timestamp.second
+            period_index = seconds_since_midnight // (block_duration * blocks_per_period)
+            block_index = seconds_since_midnight % (block_duration * blocks_per_period) // block_duration
+            if 0 <= period_index < 24 and 0 <= block_index < blocks_per_period:
+                active_block_record[period_index][block_index] = 1
+
+    return [int(sum(x)) for x in active_block_record]
+
+
 PER_HALF_HOUR_LABELS = [
     "00:00-00:30",
     "00:30-01:00",
@@ -156,11 +178,19 @@ def plot_fig():
     for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
 
+    start_date = datetime.now().date() - timedelta(days=num_days - 1)
+    hourly_cache_file_path = os.path.join("log/work_intensity_hourly_cache.pkl")
+    if os.path.exists(hourly_cache_file_path):
+        with open(hourly_cache_file_path, "rb") as cache_file:
+            hourly_cache = pickle.load(cache_file)
+    else:
+        hourly_cache = {}
+
     xlabels = []
     for i in range(week_number - 1):
-        start_date = last_several_days_data[i * 7]
-        end_date = last_several_days_data[i * 7 + 6]
-        xlabels.append(f"{start_date} - {end_date}")
+        start_label = last_several_days_data[i * 7]
+        end_label = last_several_days_data[i * 7 + 6]
+        xlabels.append(f"{start_label} - {end_label}")
     xlabels.append(
         f'{last_several_days_data[(week_number - 1) * 7]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}'
     )
@@ -172,9 +202,19 @@ def plot_fig():
             value = last_several_days_activities_daily[week_index * 7 + day_index]
             if value is None or value < 0:
                 continue
-            heatmap_data.append([week_index, day_index, value])
+            cell_date = start_date + timedelta(days=week_index * 7 + day_index)
+            log_file_path = f'log/{cell_date.strftime("%Y-%m-%d")}.log'
+            if os.path.exists(log_file_path):
+                if log_file_path not in hourly_cache:
+                    hourly_cache[log_file_path] = parse_log_file_hourly_percent(log_file_path)
+                hourly_percent = hourly_cache[log_file_path]
+            else:
+                hourly_percent = [0 for _ in range(24)]
+            heatmap_data.append([week_index, day_index, value, hourly_percent])
 
-    start_date = (datetime.now().date() - timedelta(days=num_days - 1))
+    with open(hourly_cache_file_path, "wb") as cache_file:
+        pickle.dump(hourly_cache, cache_file)
+
     trend_days = min(30, len(last_several_days_data))
     trend_labels = last_several_days_data[-trend_days:]
     trend_values = last_several_days_activities_daily[:num_days][-trend_days:]
@@ -242,13 +282,15 @@ def plot_fig():
       const x = d[0];
       const y = d[1];
       const v = d[2];
+      const hourly = d[3] || [];
       const offsetDays = x * 7 + y;
       const date = new Date(startDate.getTime() + offsetDays * 24 * 3600 * 1000);
       const iso = date.toISOString().slice(0, 10);
       return {{
         value: [x, y, v],
         date: iso,
-        weekday: weekdayNames[date.getDay()] || ''
+        weekday: weekdayNames[date.getDay()] || '',
+        hourly
       }};
     }});
     const weeks = Array.from({{length: weekRanges.length}}, (_, i) => i);
@@ -258,14 +300,64 @@ def plot_fig():
       return `${{month}}月`;
     }});
 
+    function hourlySparklineSvg(values) {{
+      const w = 560;
+      const h = 190;
+      const pad = 16;
+      const plotH = 120;
+      const plotW = w - pad * 2;
+      const maxV = 100;
+      const clamp = (n) => Math.max(0, Math.min(maxV, Number(n) || 0));
+      const full = (values && values.length ? values : Array.from({{length: 24}}, () => 0));
+      const startHour = 10;
+      const endHour = 24;
+      const sliced = full.slice(startHour, endHour);
+      const denom = Math.max(1, sliced.length - 1);
+      const points = sliced.map((v, i) => {{
+        const x = pad + (i / denom) * plotW;
+        const y = pad + (1 - clamp(v) / maxV) * plotH;
+        return `${{x.toFixed(1)}},${{y.toFixed(1)}}`;
+      }}).join(' ');
+      const yTicks = [0, 50, 100].map((t) => {{
+        const y = pad + (1 - t / 100) * plotH;
+        return `<g>
+          <line x1="${{pad}}" y1="${{y}}" x2="${{w - pad}}" y2="${{y}}" stroke="#e5e7eb" stroke-width="1" />
+          <text x="${{pad - 6}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}</text>
+        </g>`;
+      }}).join('');
+      const xTickHours = Array.from({{length: 15}}, (_, i) => startHour + i);
+      const xTicks = xTickHours.map((t) => {{
+        const i = (t - startHour);
+        const x = pad + (i / denom) * plotW;
+        return `<text x="${{x}}" y="${{pad + plotH + 28}}" text-anchor="middle" font-size="12" fill="#6b7280">${{t === 24 ? '24' : String(t).padStart(2, '0')}}</text>`;
+      }}).join('');
+      return `<svg width="${{w}}" height="${{h}}" viewBox="0 0 ${{w}} ${{h}}" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="${{w}}" height="${{h}}" rx="8" fill="#ffffff"></rect>
+        ${{yTicks}}
+        <path d="M ${{points.replaceAll(' ', ' L ')}}" fill="none" stroke="#31a354" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <text x="${{w - pad}}" y="${{pad + plotH + 28}}" text-anchor="end" font-size="12" fill="#6b7280"></text>
+        ${{xTicks}}
+      </svg>`;
+    }}
+
     contribChart.setOption({{
       tooltip: {{
         position: 'top',
+        confine: true,
+        backgroundColor: 'rgba(255, 255, 255, 0.96)',
+        borderColor: '#e5e7eb',
+        borderWidth: 1,
+        extraCssText: 'box-shadow: 0 10px 20px rgba(0,0,0,0.08); padding: 10px; border-radius: 10px;',
         formatter: (p) => {{
-          const v = p.value && p.value.length ? p.value[2] : 0;
           const date = p.data && p.data.date ? p.data.date : '';
           const weekday = p.data && p.data.weekday ? p.data.weekday : '';
-          return `${{date}} ${{weekday}}<br/>${{v}}h`;
+          const hourly = p.data && p.data.hourly ? p.data.hourly : [];
+          const svg = hourlySparklineSvg(hourly);
+          return `<div style="min-width: 580px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">${{date}} ${{weekday}}</div>
+            <div style="margin-bottom: 6px;">${{svg}}</div>
+            <div style="font-size: 12px; color: #6b7280;">活跃度趋势（10:00-24:00）</div>
+          </div>`;
         }}
       }},
       grid: {{ top: 28, left: 40, right: 10, bottom: 10, containLabel: false }},
