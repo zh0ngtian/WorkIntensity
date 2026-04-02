@@ -171,6 +171,7 @@ def get_last_several_days_activities(num_days):
 
 def plot_fig():
     week_number = 24
+    today_date = datetime.today().date()
 
     num_days = (week_number - 1) * 7 + datetime.today().weekday() + 1
     last_several_days_data, last_several_days_activities_daily = get_last_several_days_activities(num_days)
@@ -205,11 +206,17 @@ def plot_fig():
             cell_date = start_date + timedelta(days=week_index * 7 + day_index)
             log_file_path = f'log/{cell_date.strftime("%Y-%m-%d")}.log'
             if os.path.exists(log_file_path):
-                if log_file_path not in hourly_cache:
-                    hourly_cache[log_file_path] = parse_log_file_hourly_percent(log_file_path)
-                hourly_percent = hourly_cache[log_file_path]
+                if cell_date == today_date:
+                    hourly_percent = parse_log_file_hourly_percent(log_file_path)
+                    hourly_cache[log_file_path] = hourly_percent
+                else:
+                    if log_file_path not in hourly_cache:
+                        hourly_cache[log_file_path] = parse_log_file_hourly_percent(log_file_path)
+                    hourly_percent = hourly_cache[log_file_path]
             else:
                 hourly_percent = [0 for _ in range(24)]
+                if log_file_path in hourly_cache and cell_date == today_date:
+                    del hourly_cache[log_file_path]
             heatmap_data.append([week_index, day_index, value, hourly_percent])
 
     with open(hourly_cache_file_path, "wb") as cache_file:
