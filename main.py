@@ -3,7 +3,6 @@ import os
 import signal
 import subprocess
 import sys
-import time
 
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
@@ -37,7 +36,6 @@ def _ensure_required_permissions():
             "若缺少“输入监控”权限，请进入“输入监控”并勾选当前 Python/终端应用；"
             "授权后完全退出并重新启动程序。"
         )
-    print("finish check permissions")
 
 
 def _detach_from_terminal_if_possible():

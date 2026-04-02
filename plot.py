@@ -217,7 +217,9 @@ def plot_fig():
                 hourly_percent = [0 for _ in range(24)]
                 if log_file_path in hourly_cache and cell_date == today_date:
                     del hourly_cache[log_file_path]
-            heatmap_data.append([week_index, day_index, value, hourly_percent])
+            heatmap_data.append(
+                [week_index, day_index, value, hourly_percent, cell_date.strftime("%Y-%m-%d"), ylabels[cell_date.weekday()]]
+            )
 
     with open(hourly_cache_file_path, "wb") as cache_file:
         pickle.dump(hourly_cache, cache_file)
@@ -225,10 +227,13 @@ def plot_fig():
     trend_days = min(30, len(last_several_days_data))
     trend_labels = last_several_days_data[-trend_days:]
     trend_values = last_several_days_activities_daily[:num_days][-trend_days:]
+    trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
+    trend_weekdays = [ylabels[(today_date - timedelta(days=trend_days - 1 - i)).weekday()] for i in range(trend_days)]
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
-    trend_start_date = datetime.now().date() - timedelta(days=trend_days - 1)
+    current_local_date_str = today_date.strftime("%Y-%m-%d")
+    current_local_hour = datetime.now().hour
 
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -284,19 +289,17 @@ def plot_fig():
     const ylabels = {json.dumps(ylabels, ensure_ascii=False)};
     const startDateStr = {json.dumps(start_date.strftime("%Y-%m-%d"), ensure_ascii=False)};
     const startDate = new Date(startDateStr + 'T00:00:00');
-    const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const currentLocalDateStr = {json.dumps(current_local_date_str, ensure_ascii=False)};
+    const currentLocalHour = {current_local_hour};
     const heatmapData = {json.dumps(heatmap_data, ensure_ascii=False)}.map((d) => {{
       const x = d[0];
       const y = d[1];
       const v = d[2];
       const hourly = d[3] || [];
-      const offsetDays = x * 7 + y;
-      const date = new Date(startDate.getTime() + offsetDays * 24 * 3600 * 1000);
-      const iso = date.toISOString().slice(0, 10);
       return {{
         value: [x, y, v],
-        date: iso,
-        weekday: weekdayNames[date.getDay()] || '',
+        date: d[4],
+        weekday: d[5],
         hourly
       }};
     }});
@@ -307,7 +310,7 @@ def plot_fig():
       return `${{month}}月`;
     }});
 
-    function hourlySparklineSvg(values) {{
+    function hourlySparklineSvg(values, dateStr) {{
       const w = 560;
       const h = 190;
       const leftPad = 36;
@@ -320,10 +323,11 @@ def plot_fig():
       const full = (values && values.length ? values : Array.from({{length: 24}}, () => 0));
       const startHour = 10;
       const endHour = 24;
-      const sliced = full.slice(startHour, endHour);
-      const denom = Math.max(1, sliced.length - 1);
+      const visibleEndHour = dateStr === currentLocalDateStr ? Math.min(endHour, currentLocalHour + 1) : endHour;
+      const sliced = full.slice(startHour, visibleEndHour);
+      const fullIntervalCount = Math.max(1, endHour - startHour);
       const pointPairs = sliced.map((v, i) => {{
-        const x = leftPad + (i / denom) * plotW;
+        const x = leftPad + ((i + 0.5) / fullIntervalCount) * plotW;
         const y = topPad + (1 - clamp(v) / maxV) * plotH;
         return [x, y];
       }});
@@ -348,10 +352,10 @@ def plot_fig():
           <text x="${{leftPad - 8}}" y="${{y + 4}}" text-anchor="end" font-size="12" fill="#6b7280">${{t}}</text>
         </g>`;
       }}).join('');
-      const xTickHours = Array.from({{length: 15}}, (_, i) => startHour + i);
+      const xTickHours = Array.from({{length: Math.max(1, endHour - startHour + 1)}}, (_, i) => startHour + i);
       const xTicks = xTickHours.map((t) => {{
         const i = (t - startHour);
-        const x = leftPad + (i / denom) * plotW;
+        const x = leftPad + (i / fullIntervalCount) * plotW;
         return `<text x="${{x}}" y="${{topPad + plotH + 28}}" text-anchor="middle" font-size="12" fill="#6b7280">${{t === 24 ? '24' : String(t).padStart(2, '0')}}</text>`;
       }}).join('');
       return `<svg width="${{w}}" height="${{h}}" viewBox="0 0 ${{w}} ${{h}}" xmlns="http://www.w3.org/2000/svg">
@@ -375,7 +379,7 @@ def plot_fig():
           const date = p.data && p.data.date ? p.data.date : '';
           const weekday = p.data && p.data.weekday ? p.data.weekday : '';
           const hourly = p.data && p.data.hourly ? p.data.hourly : [];
-          const svg = hourlySparklineSvg(hourly);
+          const svg = hourlySparklineSvg(hourly, date);
           return `<div style="min-width: 580px;">
             <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">${{date}} ${{weekday}}</div>
             <div style="margin-bottom: 6px;">${{svg}}</div>
@@ -454,19 +458,29 @@ def plot_fig():
 
     const trendLabels = {json.dumps(trend_labels, ensure_ascii=False)};
     const trendValues = {json.dumps(trend_values, ensure_ascii=False)};
-    const trendStartDateStr = {json.dumps(trend_start_date.strftime("%Y-%m-%d"), ensure_ascii=False)};
-    const trendStartDate = new Date(trendStartDateStr + 'T00:00:00');
+    const trendDates = {json.dumps(trend_dates, ensure_ascii=False)};
+    const trendWeekdays = {json.dumps(trend_weekdays, ensure_ascii=False)};
+    const trendSeriesData = trendValues.map((value, index) => ({{
+      value,
+      date: trendDates[index],
+      weekday: trendWeekdays[index]
+    }}));
 
     barsChart.setOption({{
       tooltip: {{
         trigger: 'axis',
+        axisPointer: {{
+          type: 'line',
+          snap: true
+        }},
         formatter: (params) => {{
           const item = params && params.length ? params[0] : null;
           if (!item) return '';
-          const date = new Date(trendStartDate.getTime() + item.dataIndex * 24 * 3600 * 1000);
-          const iso = date.toISOString().slice(0, 10);
-          const weekday = weekdayNames[date.getDay()] || '';
-          return `${{iso}} ${{weekday}}<br/>${{item.data}}h`;
+          const data = item.data || {{}};
+          const date = data.date || trendDates[item.dataIndex] || item.axisValue;
+          const weekday = data.weekday || trendWeekdays[item.dataIndex] || '';
+          const value = typeof data.value === 'number' ? data.value : item.value;
+          return `${{date}} ${{weekday}}<br/>${{value}}h`;
         }}
       }},
       grid: {{ top: 20, left: 50, right: 20, bottom: 50 }},
@@ -496,11 +510,17 @@ def plot_fig():
       series: [{{
         type: 'line',
         smooth: true,
-        data: trendValues,
+        data: trendSeriesData,
+        triggerLineEvent: true,
+        showSymbol: true,
         symbol: 'circle',
         symbolSize: 8,
         lineStyle: {{ color: '#31a354', width: 3 }},
         itemStyle: {{ color: '#31a354' }},
+        emphasis: {{
+          focus: 'series',
+          scale: true
+        }},
         areaStyle: {{
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             {{ offset: 0, color: 'rgba(49, 163, 84, 0.35)' }},
