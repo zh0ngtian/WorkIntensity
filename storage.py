@@ -75,24 +75,34 @@ def _ensure_tables(conn):
 
 
 def _migrate_from_activity_events_if_needed(conn):
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activity_events'"
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activity_events'"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False
     if row is None:
         return False
 
-    has_old_data = conn.execute("SELECT 1 FROM activity_events LIMIT 1").fetchone() is not None
-    if has_old_data:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO activity_blocks(day, block_index)
-            SELECT day, CAST(second_of_day / ? AS INTEGER)
-            FROM activity_events
-            """,
-            (_BLOCK_DURATION_SECONDS,),
-        )
+    try:
+        has_old_data = conn.execute("SELECT 1 FROM activity_events LIMIT 1").fetchone() is not None
+    except sqlite3.OperationalError:
+        return False
 
-    conn.execute("DROP TABLE activity_events")
+    if has_old_data:
+        try:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO activity_blocks(day, block_index)
+                SELECT day, CAST(second_of_day / ? AS INTEGER)
+                FROM activity_events
+                """,
+                (_BLOCK_DURATION_SECONDS,),
+            )
+        except sqlite3.OperationalError:
+            return False
+
+    conn.execute("DROP TABLE IF EXISTS activity_events")
     conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.execute("VACUUM")
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -124,11 +134,19 @@ def record_activity(at_time=None):
     second_of_day = now.hour * 3600 + now.minute * 60 + now.second
     block_index = _second_to_block_index(second_of_day)
     conn = get_connection()
-    with _DB_LOCK:
-        conn.execute(
-            "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
-            (day, block_index),
-        )
+    try:
+        with _DB_LOCK:
+            conn.execute(
+                "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
+                (day, block_index),
+            )
+    except sqlite3.OperationalError:
+        with _DB_LOCK:
+            _ensure_tables(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO activity_blocks(day, block_index) VALUES (?, ?)",
+                (day, block_index),
+            )
     sync_to_icloud()
 
 
