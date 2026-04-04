@@ -3,7 +3,7 @@
 ## 运行方法（仅可用于 macOS）
 
 ```bash
-pip3 install rumps pynput pygetwindow
+pip3 install rumps pynput
 
 python3 main.py
 ```

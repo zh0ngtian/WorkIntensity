@@ -85,6 +85,10 @@ def plot_fig():
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
+    recorded_values = [value for value in last_several_days_activities_daily[:num_days] if value is not None and value >= 0]
+    active_days_count = len([value for value in recorded_values if value > 0])
+    average_daily_work = round(sum(recorded_values) / len(recorded_values), 1) if recorded_values else 0
+    peak_daily_work = round(max(recorded_values), 1) if recorded_values else 0
     current_local_date_str = today_date.strftime("%Y-%m-%d")
     current_local_hour = datetime.now().hour
 
@@ -95,32 +99,62 @@ def plot_fig():
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Work Intensity</title>
   <style>
-    html, body {{ height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', Arial, sans-serif; }}
-    .container {{ height: 100%; display: grid; grid-template-rows: 2fr 1fr; gap: 12px; padding: 12px; box-sizing: border-box; }}
-    .panel {{ border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; box-sizing: border-box; }}
-    .title {{ font-size: 16px; font-weight: 600; margin: 0 0 8px 0; }}
-    .top {{ display: grid; grid-template-rows: auto 1fr auto; gap: 6px; height: 100%; }}
-    .bottom {{ display: grid; grid-template-rows: auto 1fr; gap: 6px; height: 100%; }}
+    html, body {{ height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(180deg, #f8fafc 0%, #f3f4f6 100%); color: #111827; }}
+    .container {{ height: 100%; display: grid; grid-template-rows: 2fr 1fr; gap: 14px; padding: 14px; box-sizing: border-box; }}
+    .panel {{ border: 1px solid rgba(226, 232, 240, 0.9); border-radius: 16px; padding: 14px; box-sizing: border-box; background: rgba(255, 255, 255, 0.9); box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); backdrop-filter: blur(6px); }}
+    .title {{ font-size: 18px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }}
+    .subtitle {{ font-size: 12px; color: #6b7280; margin: 4px 0 0 0; }}
+    .top {{ display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; height: 100%; }}
+    .bottom {{ display: grid; grid-template-rows: auto 1fr; gap: 8px; height: 100%; }}
+    .section-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }}
+    .metrics {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+    .metric {{ min-width: 86px; padding: 8px 10px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); border: 1px solid rgba(199, 210, 254, 0.7); }}
+    .metric-label {{ font-size: 11px; color: #6b7280; margin-bottom: 4px; }}
+    .metric-value {{ font-size: 16px; font-weight: 700; color: #111827; }}
     #contrib {{ width: 100%; height: 100%; }}
     #bars {{ width: 100%; height: 100%; }}
-    .legend {{ display: flex; justify-content: flex-end; align-items: center; gap: 6px; color: #6b7280; font-size: 12px; }}
-    .legend .box {{ width: 12px; height: 12px; border-radius: 2px; border: 1px solid rgba(27, 31, 35, 0.06); }}
+    .legend {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #6b7280; font-size: 12px; }}
+    .legend-scale {{ display: flex; align-items: center; gap: 6px; }}
+    .legend-note {{ color: #9ca3af; }}
+    .legend .box {{ width: 12px; height: 12px; border-radius: 4px; border: 1px solid rgba(27, 31, 35, 0.04); }}
   </style>
 </head>
 <body>
   <div class="container">
     <div class="panel">
       <div class="top">
-        <p class="title">最近 {week_number} 周工作时长</p>
+        <div class="section-head">
+          <div>
+            <p class="title">最近 {week_number} 周工作时长</p>
+            <p class="subtitle">按天展示近半年活跃时长分布，颜色越深表示当天越活跃。</p>
+          </div>
+          <div class="metrics">
+            <div class="metric">
+              <div class="metric-label">活跃天数</div>
+              <div class="metric-value">{active_days_count}</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">日均时长</div>
+              <div class="metric-value">{average_daily_work}h</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">单日峰值</div>
+              <div class="metric-value">{peak_daily_work}h</div>
+            </div>
+          </div>
+        </div>
         <div id="contrib"></div>
         <div class="legend">
-          <span>少</span>
-          <span class="box" style="background:#ebedf0"></span>
-          <span class="box" style="background:#9be9a8"></span>
-          <span class="box" style="background:#40c463"></span>
-          <span class="box" style="background:#30a14e"></span>
-          <span class="box" style="background:#216e39"></span>
-          <span>多</span>
+          <span class="legend-note">工作时长热力分布</span>
+          <div class="legend-scale">
+            <span>少</span>
+            <span class="box" style="background:#eef2f7"></span>
+            <span class="box" style="background:#c7f0cf"></span>
+            <span class="box" style="background:#7dd87f"></span>
+            <span class="box" style="background:#34b45f"></span>
+            <span class="box" style="background:#157f3b"></span>
+            <span>多</span>
+          </div>
         </div>
       </div>
     </div>
@@ -224,23 +258,27 @@ def plot_fig():
       tooltip: {{
         position: 'top',
         confine: true,
-        backgroundColor: 'rgba(255, 255, 255, 0.96)',
-        borderColor: '#e5e7eb',
+        backgroundColor: 'rgba(255, 255, 255, 0.98)',
+        borderColor: '#dbe4ee',
         borderWidth: 1,
-        extraCssText: 'box-shadow: 0 10px 20px rgba(0,0,0,0.08); padding: 10px; border-radius: 10px;',
+        extraCssText: 'box-shadow: 0 18px 36px rgba(15,23,42,0.12); padding: 12px; border-radius: 14px;',
         formatter: (p) => {{
           const date = p.data && p.data.date ? p.data.date : '';
           const weekday = p.data && p.data.weekday ? p.data.weekday : '';
           const hourly = p.data && p.data.hourly ? p.data.hourly : [];
+          const value = p.value && p.value.length ? p.value[2] : 0;
           const svg = hourlySparklineSvg(hourly, date);
           return `<div style="min-width: 580px;">
-            <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">${{date}} ${{weekday}}</div>
+            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
+              <div style="font-size: 14px; font-weight: 700;">${{date}} ${{weekday}}</div>
+              <div style="font-size: 18px; font-weight: 800; color: #166534;">${{value}}h</div>
+            </div>
             <div style="margin-bottom: 6px;">${{svg}}</div>
             <div style="font-size: 12px; color: #6b7280;">活跃度趋势（10:00-24:00）</div>
           </div>`;
         }}
       }},
-      grid: {{ top: 28, left: 40, right: 10, bottom: 10, containLabel: false }},
+      grid: {{ top: 34, left: 52, right: 14, bottom: 18, containLabel: false }},
       xAxis: {{
         type: 'category',
         data: weeks,
@@ -250,8 +288,10 @@ def plot_fig():
         splitLine: {{ show: false }},
         axisLabel: {{
           interval: 0,
-          fontSize: 16,
+          fontSize: 14,
+          fontWeight: 600,
           color: '#6b7280',
+          margin: 10,
           formatter: (value) => {{
             if (value === 0) return monthLabels[0];
             return monthLabels[value] !== monthLabels[value - 1] ? monthLabels[value] : '';
@@ -266,20 +306,22 @@ def plot_fig():
         axisLine: {{ show: false }},
         splitLine: {{ show: false }},
         axisLabel: {{
-          fontSize: 16,
+          fontSize: 13,
+          fontWeight: 600,
           color: '#6b7280',
-          interval: 0
+          interval: 0,
+          margin: 12
         }}
       }},
       visualMap: {{
         type: 'piecewise',
         show: false,
         pieces: [
-          {{ lte: 0, color: '#ebedf0' }},
-          {{ gt: 0, lte: 2, color: '#9be9a8' }},
-          {{ gt: 2, lte: 4, color: '#40c463' }},
-          {{ gt: 4, lte: 6, color: '#30a14e' }},
-          {{ gt: 6, color: '#216e39' }},
+          {{ lte: 0, color: '#eef2f7' }},
+          {{ gt: 0, lte: 2, color: '#c7f0cf' }},
+          {{ gt: 2, lte: 4, color: '#7dd87f' }},
+          {{ gt: 4, lte: 6, color: '#34b45f' }},
+          {{ gt: 6, color: '#157f3b' }},
         ]
       }},
       series: [{{
@@ -287,7 +329,8 @@ def plot_fig():
         data: heatmapData,
         label: {{
           show: true,
-          fontSize: 14,
+          fontSize: 12,
+          fontWeight: 700,
           color: '#111827',
           formatter: (p) => {{
             const v = p.value && p.value.length ? p.value[2] : null;
@@ -296,14 +339,18 @@ def plot_fig():
           }}
         }},
         itemStyle: {{
-          borderWidth: 2,
-          borderColor: '#ffffff',
-          borderRadius: 2
+          borderWidth: 3,
+          borderColor: 'rgba(255,255,255,0.95)',
+          borderRadius: 7,
+          shadowBlur: 0,
+          shadowColor: 'rgba(15, 23, 42, 0.08)'
         }},
         emphasis: {{
           itemStyle: {{
-            borderColor: '#111827',
-            borderWidth: 1
+            borderColor: '#0f172a',
+            borderWidth: 2,
+            shadowBlur: 18,
+            shadowColor: 'rgba(15, 23, 42, 0.18)'
           }}
         }}
       }}]

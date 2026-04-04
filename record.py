@@ -3,7 +3,6 @@ import os
 import threading
 import time
 
-import pygetwindow as gw
 from pynput import keyboard, mouse
 
 import storage
@@ -22,6 +21,36 @@ def _write_record_error(message):
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
     except Exception:
         pass
+
+
+def _get_frontmost_window_names():
+    try:
+        import Quartz
+    except Exception as e:
+        _write_record_error(f"quartz import error: {e!r}")
+        return "", ""
+
+    try:
+        options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+        windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
+    except Exception as e:
+        _write_record_error(f"CGWindowListCopyWindowInfo error: {e!r}")
+        return "", ""
+
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        if int(window.get("kCGWindowLayer", 0) or 0) != 0:
+            continue
+        if float(window.get("kCGWindowAlpha", 1) or 0) <= 0:
+            continue
+
+        owner_name = str(window.get("kCGWindowOwnerName") or "").strip()
+        window_name = str(window.get("kCGWindowName") or "").strip()
+        if owner_name or window_name:
+            return owner_name, window_name
+
+    return "", ""
 
 
 # 监听鼠标点击事件
@@ -55,10 +84,8 @@ def on_key_press(key):
 def on_feishu_meeting():
     while True:
         try:
-            active_window = gw.getActiveWindow()
-            title = getattr(active_window, "title", None)
-            active_window_name = title if isinstance(title, str) else (str(active_window) if active_window else "")
-            if active_window_name.strip() == "Window Server":
+            owner_name, window_name = _get_frontmost_window_names()
+            if owner_name == "Window Server" or window_name == "Window Server":
                 with event_lock:
                     storage.record_activity()
         except Exception as e:
