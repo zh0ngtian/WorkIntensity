@@ -104,9 +104,9 @@ def plot_fig():
     .panel {{ border: 1px solid rgba(226, 232, 240, 0.9); border-radius: 16px; padding: 14px; box-sizing: border-box; background: rgba(255, 255, 255, 0.9); box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); backdrop-filter: blur(6px); }}
     .title {{ font-size: 18px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }}
     .subtitle {{ font-size: 12px; color: #6b7280; margin: 4px 0 0 0; }}
-    .top {{ display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; height: 100%; }}
+    .top {{ display: grid; grid-template-rows: auto 1fr auto; gap: 10px; height: 100%; }}
     .bottom {{ display: grid; grid-template-rows: auto 1fr; gap: 8px; height: 100%; }}
-    .section-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }}
+    .section-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
     .metrics {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
     .metric {{ min-width: 86px; padding: 8px 10px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); border: 1px solid rgba(199, 210, 254, 0.7); }}
     .metric-label {{ font-size: 11px; color: #6b7280; margin-bottom: 4px; }}
