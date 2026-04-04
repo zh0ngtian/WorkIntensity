@@ -86,7 +86,6 @@ def plot_fig():
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
     recorded_values = [value for value in last_several_days_activities_daily[:num_days] if value is not None and value >= 0]
-    active_days_count = len([value for value in recorded_values if value > 0])
     average_daily_work = round(sum(recorded_values) / len(recorded_values), 1) if recorded_values else 0
     peak_daily_work = round(max(recorded_values), 1) if recorded_values else 0
     today_work = round(last_several_days_activities_daily[num_days - 1], 1) if num_days > 0 else 0
@@ -99,7 +98,6 @@ def plot_fig():
 
     replacements = {
         "__WEEK_NUMBER__": str(week_number),
-        "__ACTIVE_DAYS_COUNT__": str(active_days_count),
         "__AVERAGE_DAILY_WORK__": str(average_daily_work),
         "__PEAK_DAILY_WORK__": str(peak_daily_work),
         "__TODAY_WORK__": str(today_work),
