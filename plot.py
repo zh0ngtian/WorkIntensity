@@ -254,7 +254,7 @@ def plot_fig():
       </svg>`;
     }}
 
-    contribChart.setOption({{
+    const contribBaseOption = {{
       tooltip: {{
         position: 'top',
         confine: true,
@@ -278,7 +278,6 @@ def plot_fig():
           </div>`;
         }}
       }},
-      grid: {{ top: 34, left: 52, right: 14, bottom: 18, containLabel: false }},
       xAxis: {{
         type: 'category',
         data: weeks,
@@ -317,11 +316,11 @@ def plot_fig():
         type: 'piecewise',
         show: false,
         pieces: [
-          {{ lte: 0, color: '#eef2f7' }},
-          {{ gt: 0, lte: 2, color: '#c7f0cf' }},
-          {{ gt: 2, lte: 4, color: '#7dd87f' }},
-          {{ gt: 4, lte: 6, color: '#34b45f' }},
-          {{ gt: 6, color: '#157f3b' }},
+          {{ lte: 0, color: '#f3f6f9' }},
+          {{ gt: 0, lte: 2, color: '#dceddf' }},
+          {{ gt: 2, lte: 4, color: '#b5ddbf' }},
+          {{ gt: 4, lte: 6, color: '#7fc397' }},
+          {{ gt: 6, color: '#4f9d72' }},
         ]
       }},
       series: [{{
@@ -331,11 +330,32 @@ def plot_fig():
           show: true,
           fontSize: 12,
           fontWeight: 700,
-          color: '#111827',
           formatter: (p) => {{
             const v = p.value && p.value.length ? p.value[2] : null;
             if (v === null || v === undefined || v <= 0) return '';
-            return `${{v}}h`;
+            const text = `${{v}}h`;
+            if (v <= 2) return `{{soft|${{text}}}}`;
+            if (v <= 4) return `{{mid|${{text}}}}`;
+            return `{{light|${{text}}}}`;
+          }},
+          rich: {{
+            soft: {{
+              color: '#4b5563',
+              fontSize: 12,
+              fontWeight: 700
+            }},
+            mid: {{
+              color: '#1f2937',
+              fontSize: 12,
+              fontWeight: 700
+            }},
+            light: {{
+              color: 'rgba(255,255,255,0.92)',
+              fontSize: 12,
+              fontWeight: 700,
+              textShadowColor: 'rgba(15, 23, 42, 0.18)',
+              textShadowBlur: 6
+            }}
           }}
         }},
         itemStyle: {{
@@ -354,7 +374,35 @@ def plot_fig():
           }}
         }}
       }}]
-    }});
+    }};
+
+    function renderContribChart() {{
+      const width = contribEl.clientWidth || 960;
+      const height = contribEl.clientHeight || 420;
+      const leftPadding = 64;
+      const rightPadding = 18;
+      const topPadding = 40;
+      const bottomPadding = 20;
+      const plotMaxWidth = Math.max(0, width - leftPadding - rightPadding);
+      const plotMaxHeight = Math.max(0, height - topPadding - bottomPadding);
+      const cellSize = Math.max(10, Math.floor(Math.min(plotMaxWidth / weeks.length, plotMaxHeight / ylabels.length)));
+      const gridWidth = cellSize * weeks.length;
+      const gridHeight = cellSize * ylabels.length;
+      const gridLeft = leftPadding + Math.max(0, Math.floor((plotMaxWidth - gridWidth) / 2));
+      const gridTop = topPadding + Math.max(0, Math.floor((plotMaxHeight - gridHeight) / 2));
+      contribChart.setOption({{
+        ...contribBaseOption,
+        grid: {{
+          left: gridLeft,
+          top: gridTop,
+          width: gridWidth,
+          height: gridHeight,
+          containLabel: false
+        }}
+      }});
+    }}
+
+    renderContribChart();
 
     const trendLabels = {json.dumps(trend_labels, ensure_ascii=False)};
     const trendValues = {json.dumps(trend_values, ensure_ascii=False)};
@@ -432,6 +480,7 @@ def plot_fig():
 
     window.addEventListener('resize', () => {{
       contribChart.resize();
+      renderContribChart();
       barsChart.resize();
     }});
   </script>
