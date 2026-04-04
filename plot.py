@@ -89,6 +89,7 @@ def plot_fig():
     active_days_count = len([value for value in recorded_values if value > 0])
     average_daily_work = round(sum(recorded_values) / len(recorded_values), 1) if recorded_values else 0
     peak_daily_work = round(max(recorded_values), 1) if recorded_values else 0
+    today_work = round(last_several_days_activities_daily[num_days - 1], 1) if num_days > 0 else 0
     current_local_date_str = today_date.strftime("%Y-%m-%d")
     current_local_hour = datetime.now().hour
 
@@ -101,6 +102,7 @@ def plot_fig():
         "__ACTIVE_DAYS_COUNT__": str(active_days_count),
         "__AVERAGE_DAILY_WORK__": str(average_daily_work),
         "__PEAK_DAILY_WORK__": str(peak_daily_work),
+        "__TODAY_WORK__": str(today_work),
         "__TREND_DAYS__": str(trend_days),
         "__TREND_TOTAL__": str(trend_total),
         "__WEEK_RANGES_JSON__": json.dumps(xlabels, ensure_ascii=False),
