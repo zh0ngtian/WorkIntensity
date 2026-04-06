@@ -3,6 +3,8 @@ import json
 from datetime import datetime, timedelta
 import webbrowser
 
+import chinese_calendar
+
 import storage
 
 
@@ -26,6 +28,10 @@ def calculate_daily_work_hours(seconds_list):
 def calculate_hourly_percent(seconds_list):
     active_block_record = _build_active_block_record(seconds_list, block_duration=36, period_count=24, blocks_per_period=100)
     return [int(sum(x)) for x in active_block_record]
+
+
+def is_china_workday(day_value):
+    return chinese_calendar.is_workday(day_value)
 
 
 def get_last_several_days_activities(num_days):
@@ -86,7 +92,15 @@ def plot_fig():
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
     recorded_values = [value for value in last_several_days_activities_daily[:num_days] if value is not None and value >= 0]
-    average_daily_work = round(sum(recorded_values) / len(recorded_values), 1) if recorded_values else 0
+    workday_values = []
+    for i in range(num_days):
+        current_date = start_date + timedelta(days=i)
+        value = last_several_days_activities_daily[i]
+        if value is None or value < 0:
+            continue
+        if is_china_workday(current_date) and value > 0:
+            workday_values.append(value)
+    average_daily_work = round(sum(workday_values) / len(workday_values), 1) if workday_values else 0
     peak_daily_work = round(max(recorded_values), 1) if recorded_values else 0
     today_work = round(last_several_days_activities_daily[num_days - 1], 1) if num_days > 0 else 0
     current_local_date_str = today_date.strftime("%Y-%m-%d")

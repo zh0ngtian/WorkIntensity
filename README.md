@@ -3,7 +3,7 @@
 ## 运行方法（仅可用于 macOS）
 
 ```bash
-pip3 install rumps pynput
+pip3 install rumps pynput chinese-calendar
 
 python3 main.py
 ```
