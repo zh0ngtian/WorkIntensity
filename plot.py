@@ -83,7 +83,8 @@ def plot_fig():
                 [week_index, day_index, value, hourly_percent, cell_date.strftime("%Y-%m-%d"), ylabels[cell_date.weekday()]]
             )
 
-    trend_days = min(30, len(last_several_days_data))
+    trend_weeks = 12
+    trend_days = min(trend_weeks * 7, len(last_several_days_data))
     trend_labels = last_several_days_data[-trend_days:]
     trend_values = last_several_days_activities_daily[:num_days][-trend_days:]
     trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
@@ -115,7 +116,7 @@ def plot_fig():
         "__AVERAGE_DAILY_WORK__": str(average_daily_work),
         "__PEAK_DAILY_WORK__": str(peak_daily_work),
         "__TODAY_WORK__": str(today_work),
-        "__TREND_DAYS__": str(trend_days),
+        "__TREND_WEEKS__": str(trend_weeks),
         "__TREND_TOTAL__": str(trend_total),
         "__WEEK_RANGES_JSON__": json.dumps(xlabels, ensure_ascii=False),
         "__YLABELS_JSON__": json.dumps(ylabels, ensure_ascii=False),
