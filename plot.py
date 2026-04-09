@@ -60,6 +60,7 @@ def plot_fig():
         last_several_days_activities_daily.append(-1)
 
     start_date = datetime.now().date() - timedelta(days=num_days - 1)
+    displayed_dates = [start_date + timedelta(days=i) for i in range(num_days)]
     xlabels = []
     for i in range(week_number - 1):
         start_label = last_several_days_data[i * 7]
@@ -76,7 +77,7 @@ def plot_fig():
             value = last_several_days_activities_daily[week_index * 7 + day_index]
             if value is None or value < 0:
                 continue
-            cell_date = start_date + timedelta(days=week_index * 7 + day_index)
+            cell_date = displayed_dates[week_index * 7 + day_index]
             day_key = cell_date.strftime("%Y-%m-%d")
             hourly_percent = calculate_hourly_percent(day_seconds_map.get(day_key, []))
             heatmap_data.append(
@@ -92,11 +93,10 @@ def plot_fig():
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
-    recorded_values = [value for value in last_several_days_activities_daily[:num_days] if value is not None and value >= 0]
+    displayed_values = last_several_days_activities_daily[:num_days]
+    recorded_values = [value for value in displayed_values if value is not None and value >= 0]
     workday_values = []
-    for i in range(num_days):
-        current_date = start_date + timedelta(days=i)
-        value = last_several_days_activities_daily[i]
+    for current_date, value in zip(displayed_dates, displayed_values):
         if value is None or value < 0:
             continue
         if is_china_workday(current_date) and value > 0:
