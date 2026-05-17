@@ -15,6 +15,8 @@
     .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .metrics { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .metric { min-width: 86px; padding: 8px 10px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); border: 1px solid rgba(199, 210, 254, 0.7); }
+    .metric-token { background: linear-gradient(180deg, #fff7fb 0%, #fce7f3 100%); border-color: rgba(251, 207, 232, 0.9); }
+    .metric-token .metric-value { color: #9d174d; }
     .metric-label { font-size: 11px; color: #6b7280; margin-bottom: 4px; }
     .metric-value { font-size: 16px; font-weight: 700; color: #111827; }
     #contrib { width: 100%; height: 100%; }
@@ -46,6 +48,18 @@
             <div class="metric">
               <div class="metric-label">今日时长</div>
               <div class="metric-value">__TODAY_WORK__h</div>
+            </div>
+            <div class="metric metric-token">
+              <div class="metric-label">工作日日均 Token</div>
+              <div class="metric-value">__AVERAGE_DAILY_TOKENS__</div>
+            </div>
+            <div class="metric metric-token">
+              <div class="metric-label">Token 单日峰值</div>
+              <div class="metric-value">__PEAK_DAILY_TOKENS__</div>
+            </div>
+            <div class="metric metric-token">
+              <div class="metric-label">今日 Token</div>
+              <div class="metric-value">__TODAY_TOKENS__</div>
             </div>
           </div>
         </div>

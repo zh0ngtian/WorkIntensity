@@ -16,6 +16,21 @@ class PlotTokenDataTest(unittest.TestCase):
     def test_daily_token_usage_is_sum_of_hourly_values(self):
         self.assertEqual(plot.calculate_daily_token_usage([1, 2, 3] + [0 for _ in range(21)]), 6)
 
+    def test_token_metric_values_use_workday_nonzero_average_and_today(self):
+        start_day = datetime(2026, 5, 11).date()
+        displayed_dates = [start_day + timedelta(days=index) for index in range(4)]
+
+        average, peak, today = plot.calculate_token_metric_values(displayed_dates, [0, 1000, 500, 3000])
+
+        self.assertEqual(average, 1500)
+        self.assertEqual(peak, 3000)
+        self.assertEqual(today, 3000)
+
+    def test_format_token_count_uses_compact_units(self):
+        self.assertEqual(plot.format_token_count(999), "999")
+        self.assertEqual(plot.format_token_count(1200), "1.2K")
+        self.assertEqual(plot.format_token_count(2_500_000), "2.5M")
+
     def test_last_several_days_token_totals_match_hourly_arrays(self):
         old_get_token_usage = plot.storage.get_token_usage_by_date_range
         old_get_activity = plot.storage.get_activity_seconds_for_date

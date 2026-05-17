@@ -34,6 +34,31 @@ def calculate_daily_token_usage(hourly_tokens):
     return sum(int(value or 0) for value in hourly_tokens)
 
 
+def calculate_token_metric_values(displayed_dates, daily_token_values):
+    workday_token_values = []
+    recorded_token_values = []
+    for current_date, value in zip(displayed_dates, daily_token_values):
+        daily_tokens = int(value or 0)
+        recorded_token_values.append(daily_tokens)
+        if is_china_workday(current_date) and daily_tokens > 0:
+            workday_token_values.append(daily_tokens)
+    average_daily_tokens = int(round(sum(workday_token_values) / len(workday_token_values))) if workday_token_values else 0
+    peak_daily_tokens = max(recorded_token_values, default=0)
+    today_tokens = int(daily_token_values[-1] or 0) if daily_token_values else 0
+    return average_daily_tokens, peak_daily_tokens, today_tokens
+
+
+def format_token_count(value):
+    value = int(value or 0)
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return str(value)
+
+
 def slice_recent_trend_values(values, num_days, trend_days):
     return values[:num_days][-trend_days:]
 
@@ -144,6 +169,8 @@ def plot_fig():
     average_daily_work = round(sum(workday_values) / len(workday_values), 1) if workday_values else 0
     peak_daily_work = round(max(recorded_values), 1) if recorded_values else 0
     today_work = round(last_several_days_activities_daily[num_days - 1], 1) if num_days > 0 else 0
+    token_displayed_values = last_several_days_tokens_daily[:num_days]
+    average_daily_tokens, peak_daily_tokens, today_tokens = calculate_token_metric_values(displayed_dates, token_displayed_values)
     current_local_date_str = today_date.strftime("%Y-%m-%d")
     current_local_hour = datetime.now().hour
 
@@ -156,6 +183,9 @@ def plot_fig():
         "__AVERAGE_DAILY_WORK__": str(average_daily_work),
         "__PEAK_DAILY_WORK__": str(peak_daily_work),
         "__TODAY_WORK__": str(today_work),
+        "__AVERAGE_DAILY_TOKENS__": format_token_count(average_daily_tokens),
+        "__PEAK_DAILY_TOKENS__": format_token_count(peak_daily_tokens),
+        "__TODAY_TOKENS__": format_token_count(today_tokens),
         "__TREND_WEEKS__": str(trend_weeks),
         "__TREND_TOTAL__": str(trend_total),
         "__WEEK_RANGES_JSON__": json.dumps(xlabels, ensure_ascii=False),
