@@ -88,11 +88,15 @@
       const y = d[1];
       const v = d[2];
       const hourly = d[3] || [];
+      const tokenTotal = d[6] || 0;
+      const hourlyTokens = d[7] || [];
       return {
         value: [x, y, v],
         date: d[4],
         weekday: d[5],
-        hourly
+        hourly,
+        tokenTotal,
+        hourlyTokens
       };
     });
     const weeks = Array.from({length: weekRanges.length}, (_, i) => i);
@@ -102,28 +106,34 @@
       return `${month}月`;
     });
 
-    function hourlySparklineSvg(values, dateStr) {
+    function formatTokenCount(value) {
+      const n = Number(value) || 0;
+      if (n >= 1000000000) return `${(n / 1000000000).toFixed(1)}B`;
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+      if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+      return `${Math.round(n)}`;
+    }
+
+    function dailySparklineSvg(activityValues, tokenValues, dateStr) {
       const w = 560;
-      const h = 190;
+      const h = 212;
       const leftPad = 46;
-      const rightPad = 16;
+      const rightPad = 58;
       const topPad = 16;
       const plotH = 120;
       const plotW = w - leftPad - rightPad;
       const maxV = 100;
       const clamp = (n) => Math.max(0, Math.min(maxV, Number(n) || 0));
-      const full = (values && values.length ? values : Array.from({length: 24}, () => 0));
-      const startHour = 10;
+      const activityFull = (activityValues && activityValues.length ? activityValues : Array.from({length: 24}, () => 0));
+      const tokenFull = (tokenValues && tokenValues.length ? tokenValues : Array.from({length: 24}, () => 0));
+      const startHour = 0;
       const endHour = 24;
       const visibleEndHour = dateStr === currentLocalDateStr ? Math.min(endHour, currentLocalHour + 1) : endHour;
-      const sliced = full.slice(startHour, visibleEndHour);
+      const activitySliced = activityFull.slice(startHour, visibleEndHour);
+      const tokenSliced = tokenFull.slice(startHour, visibleEndHour).map((v) => Math.max(0, Number(v) || 0));
+      const maxToken = Math.max(1, ...tokenSliced);
       const fullIntervalCount = Math.max(1, endHour - startHour);
-      const pointPairs = sliced.map((v, i) => {
-        const x = leftPad + ((i + 0.5) / fullIntervalCount) * plotW;
-        const y = topPad + (1 - clamp(v) / maxV) * plotH;
-        return [x, y];
-      });
-      const smoothPath = pointPairs.length <= 1
+      const buildPath = (pointPairs) => pointPairs.length <= 1
         ? ''
         : pointPairs.reduce((path, point, index, points) => {
             const [x, y] = point;
@@ -137,6 +147,18 @@
             const cp2Y = y;
             return `${path} C ${cp1X.toFixed(1)} ${cp1Y.toFixed(1)}, ${cp2X.toFixed(1)} ${cp2Y.toFixed(1)}, ${x.toFixed(1)} ${y.toFixed(1)}`;
           }, '');
+      const activityPoints = activitySliced.map((v, i) => {
+        const x = leftPad + ((i + 0.5) / fullIntervalCount) * plotW;
+        const y = topPad + (1 - clamp(v) / maxV) * plotH;
+        return [x, y];
+      });
+      const tokenPoints = tokenSliced.map((v, i) => {
+        const x = leftPad + ((i + 0.5) / fullIntervalCount) * plotW;
+        const y = topPad + (1 - v / maxToken) * plotH;
+        return [x, y];
+      });
+      const activityPath = buildPath(activityPoints);
+      const tokenPath = buildPath(tokenPoints);
       const yTicks = [0, 25, 50, 75, 100].map((t) => {
         const y = topPad + (1 - t / 100) * plotH;
         return `<g>
@@ -144,7 +166,11 @@
           <text x="${leftPad - 8}" y="${y + 4}" text-anchor="end" font-size="12" fill="#6b7280">${t}%</text>
         </g>`;
       }).join('');
-      const xTickHours = Array.from({length: Math.max(1, endHour - startHour + 1)}, (_, i) => startHour + i);
+      const tokenTicks = [0, 0.5, 1].map((ratio) => {
+        const y = topPad + (1 - ratio) * plotH;
+        return `<text x="${w - rightPad + 8}" y="${y + 4}" text-anchor="start" font-size="12" fill="#9d174d">${formatTokenCount(maxToken * ratio)}</text>`;
+      }).join('');
+      const xTickHours = [0, 4, 8, 12, 16, 20, 24];
       const xTicks = xTickHours.map((t) => {
         const i = (t - startHour);
         const x = leftPad + (i / fullIntervalCount) * plotW;
@@ -153,8 +179,13 @@
       return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
         <rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="#ffffff"></rect>
         ${yTicks}
-        <path d="${smoothPath}" fill="none" stroke="#31a354" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
-        <text x="${w - rightPad}" y="${topPad + plotH + 28}" text-anchor="end" font-size="12" fill="#6b7280"></text>
+        ${tokenTicks}
+        <path d="${activityPath}" fill="none" stroke="#31a354" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="${tokenPath}" fill="none" stroke="#db2777" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle cx="${leftPad + 6}" cy="${topPad + plotH + 52}" r="4" fill="#31a354"></circle>
+        <text x="${leftPad + 16}" y="${topPad + plotH + 56}" font-size="12" fill="#374151">活跃度</text>
+        <circle cx="${leftPad + 82}" cy="${topPad + plotH + 52}" r="4" fill="#db2777"></circle>
+        <text x="${leftPad + 92}" y="${topPad + plotH + 56}" font-size="12" fill="#374151">Token 用量</text>
         ${xTicks}
       </svg>`;
     }
@@ -171,15 +202,20 @@
           const date = p.data && p.data.date ? p.data.date : '';
           const weekday = p.data && p.data.weekday ? p.data.weekday : '';
           const hourly = p.data && p.data.hourly ? p.data.hourly : [];
+          const hourlyTokens = p.data && p.data.hourlyTokens ? p.data.hourlyTokens : [];
+          const tokenTotal = p.data && p.data.tokenTotal ? p.data.tokenTotal : 0;
           const value = p.value && p.value.length ? p.value[2] : 0;
-          const svg = hourlySparklineSvg(hourly, date);
+          const dailySvg = dailySparklineSvg(hourly, hourlyTokens, date);
           return `<div style="min-width: 580px;">
             <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
               <div style="font-size: 14px; font-weight: 700;">${date} ${weekday}</div>
-              <div style="font-size: 18px; font-weight: 800; color: #166534;">${value}h</div>
+              <div style="display:flex; align-items:baseline; gap:12px;">
+                <div style="font-size: 18px; font-weight: 800; color: #166534;">${value}h</div>
+                <div style="font-size: 18px; font-weight: 800; color: #db2777;">${formatTokenCount(tokenTotal)}</div>
+              </div>
             </div>
-            <div style="margin-bottom: 6px;">${svg}</div>
-            <div style="font-size: 12px; color: #6b7280;">活跃度趋势（10:00-24:00）</div>
+            <div style="margin-bottom: 6px;">${dailySvg}</div>
+            <div style="font-size: 12px; color: #6b7280;">活跃度 / Token 用量趋势（00:00-24:00）</div>
           </div>`;
         }
       },
@@ -238,10 +274,10 @@
           formatter: (p) => {
             const v = p.value && p.value.length ? p.value[2] : null;
             if (v === null || v === undefined || v <= 0) return '';
-            const text = `${v}h`;
-            if (v <= 2) return `{soft|${text}}`;
-            if (v <= 4) return `{mid|${text}}`;
-            return `{light|${text}}`;
+            const hourText = `${v}h`;
+            if (v <= 2) return `{soft|${hourText}}`;
+            if (v <= 4) return `{mid|${hourText}}`;
+            return `{light|${hourText}}`;
           },
           rich: {
             soft: {
@@ -311,6 +347,7 @@
 
     const trendLabels = __TREND_LABELS_JSON__;
     const trendValues = __TREND_VALUES_JSON__;
+    const trendTokenValues = __TREND_TOKEN_VALUES_JSON__;
     const trendDates = __TREND_DATES_JSON__;
     const trendWeekdays = __TREND_WEEKDAYS_JSON__;
     const trendSeriesData = trendValues.map((value, index) => ({
@@ -318,8 +355,18 @@
       date: trendDates[index],
       weekday: trendWeekdays[index]
     }));
+    const trendTokenSeriesData = trendTokenValues.map((value, index) => ({
+      value,
+      date: trendDates[index],
+      weekday: trendWeekdays[index]
+    }));
 
     barsChart.setOption({
+      legend: {
+        top: 0,
+        right: 20,
+        data: ['工作时长', 'Token 用量']
+      },
       tooltip: {
         trigger: 'axis',
         axisPointer: {
@@ -327,16 +374,22 @@
           snap: true
         },
         formatter: (params) => {
-          const item = params && params.length ? params[0] : null;
+          const items = params || [];
+          const item = items.length ? items[0] : null;
           if (!item) return '';
           const data = item.data || {};
           const date = data.date || trendDates[item.dataIndex] || item.axisValue;
           const weekday = data.weekday || trendWeekdays[item.dataIndex] || '';
-          const value = typeof data.value === 'number' ? data.value : item.value;
-          return `${date} ${weekday}<br/>${value}h`;
+          const lines = items.map((entry) => {
+            const value = typeof entry.data.value === 'number' ? entry.data.value : entry.value;
+            const suffix = entry.seriesName === 'Token 用量' ? '' : 'h';
+            const displayValue = entry.seriesName === 'Token 用量' ? formatTokenCount(value) : value;
+            return `${entry.marker}${entry.seriesName}: ${displayValue}${suffix}`;
+          });
+          return `${date} ${weekday}<br/>${lines.join('<br/>')}`;
         }
       },
-      grid: { top: 20, left: 50, right: 20, bottom: 50 },
+      grid: { top: 28, left: 50, right: 58, bottom: 50 },
       xAxis: {
         type: 'category',
         data: trendLabels,
@@ -346,21 +399,35 @@
           fontSize: 12
         }
       },
-      yAxis: {
-        type: 'value',
-        min: 0,
-        max: __TREND_Y_MAX__,
-        axisLabel: {
-          formatter: '{value}h',
-          fontSize: 12
+      yAxis: [
+        {
+          type: 'value',
+          min: 0,
+          max: __TREND_Y_MAX__,
+          axisLabel: {
+            formatter: '{value}h',
+            fontSize: 12
+          },
+          splitLine: {
+            lineStyle: {
+              color: '#e5e7eb'
+            }
+          }
         },
-        splitLine: {
-          lineStyle: {
-            color: '#e5e7eb'
+        {
+          type: 'value',
+          min: 0,
+          axisLabel: {
+            formatter: (value) => formatTokenCount(value),
+            fontSize: 12
+          },
+          splitLine: {
+            show: false
           }
         }
-      },
+      ],
       series: [{
+        name: '工作时长',
         type: 'line',
         smooth: true,
         data: trendSeriesData,
@@ -379,6 +446,21 @@
             { offset: 0, color: 'rgba(49, 163, 84, 0.35)' },
             { offset: 1, color: 'rgba(49, 163, 84, 0.05)' }
           ])
+        }
+      }, {
+        name: 'Token 用量',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: trendTokenSeriesData,
+        showSymbol: true,
+        symbol: 'circle',
+        symbolSize: 7,
+        lineStyle: { color: '#db2777', width: 2.5 },
+        itemStyle: { color: '#db2777' },
+        emphasis: {
+          focus: 'series',
+          scale: true
         }
       }]
     });

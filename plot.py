@@ -30,23 +30,44 @@ def calculate_hourly_percent(seconds_list):
     return [int(sum(x)) for x in active_block_record]
 
 
+def calculate_daily_token_usage(hourly_tokens):
+    return sum(int(value or 0) for value in hourly_tokens)
+
+
+def slice_recent_trend_values(values, num_days, trend_days):
+    return values[:num_days][-trend_days:]
+
+
 def is_china_workday(day_value):
     return chinese_calendar.is_workday(day_value)
 
 
 def get_last_several_days_activities(num_days):
     start_of_last_several_days = datetime.now().date() - timedelta(days=num_days - 1)
+    end_of_last_several_days = start_of_last_several_days + timedelta(days=num_days - 1)
+    token_usage_by_day = storage.get_token_usage_by_date_range(start_of_last_several_days, end_of_last_several_days)
     last_several_days_date = []
     last_several_days_activities_daily = []
+    last_several_days_tokens_daily = []
     day_seconds_map = {}
+    day_token_map = {}
     for i in range(num_days):
         current_date = start_of_last_several_days + timedelta(days=i)
         day_key = current_date.strftime("%Y-%m-%d")
         seconds_list = storage.get_activity_seconds_for_date(current_date)
+        hourly_tokens = token_usage_by_day.get(day_key, [0 for _ in range(24)])
         day_seconds_map[day_key] = seconds_list
+        day_token_map[day_key] = hourly_tokens
         last_several_days_date.append(current_date.strftime("%m-%d"))
         last_several_days_activities_daily.append(calculate_daily_work_hours(seconds_list) if seconds_list else 0)
-    return last_several_days_date, last_several_days_activities_daily, day_seconds_map
+        last_several_days_tokens_daily.append(calculate_daily_token_usage(hourly_tokens))
+    return (
+        last_several_days_date,
+        last_several_days_activities_daily,
+        day_seconds_map,
+        last_several_days_tokens_daily,
+        day_token_map,
+    )
 
 
 def plot_fig():
@@ -54,10 +75,17 @@ def plot_fig():
     today_date = datetime.today().date()
 
     num_days = (week_number - 1) * 7 + datetime.today().weekday() + 1
-    last_several_days_data, last_several_days_activities_daily, day_seconds_map = get_last_several_days_activities(num_days)
+    (
+        last_several_days_data,
+        last_several_days_activities_daily,
+        day_seconds_map,
+        last_several_days_tokens_daily,
+        day_token_map,
+    ) = get_last_several_days_activities(num_days)
 
     for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
+        last_several_days_tokens_daily.append(0)
 
     start_date = datetime.now().date() - timedelta(days=num_days - 1)
     displayed_dates = [start_date + timedelta(days=i) for i in range(num_days)]
@@ -80,14 +108,26 @@ def plot_fig():
             cell_date = displayed_dates[week_index * 7 + day_index]
             day_key = cell_date.strftime("%Y-%m-%d")
             hourly_percent = calculate_hourly_percent(day_seconds_map.get(day_key, []))
+            hourly_tokens = day_token_map.get(day_key, [0 for _ in range(24)])
+            daily_tokens = calculate_daily_token_usage(hourly_tokens)
             heatmap_data.append(
-                [week_index, day_index, value, hourly_percent, cell_date.strftime("%Y-%m-%d"), ylabels[cell_date.weekday()]]
+                [
+                    week_index,
+                    day_index,
+                    value,
+                    hourly_percent,
+                    cell_date.strftime("%Y-%m-%d"),
+                    ylabels[cell_date.weekday()],
+                    daily_tokens,
+                    hourly_tokens,
+                ]
             )
 
     trend_weeks = 12
     trend_days = min(trend_weeks * 7, len(last_several_days_data))
     trend_labels = last_several_days_data[-trend_days:]
-    trend_values = last_several_days_activities_daily[:num_days][-trend_days:]
+    trend_values = slice_recent_trend_values(last_several_days_activities_daily, num_days, trend_days)
+    trend_token_values = slice_recent_trend_values(last_several_days_tokens_daily, num_days, trend_days)
     trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
     trend_weekdays = [ylabels[(today_date - timedelta(days=trend_days - 1 - i)).weekday()] for i in range(trend_days)]
     trend_max = max(trend_values, default=0)
@@ -126,6 +166,7 @@ def plot_fig():
         "__HEATMAP_DATA_JSON__": json.dumps(heatmap_data, ensure_ascii=False),
         "__TREND_LABELS_JSON__": json.dumps(trend_labels, ensure_ascii=False),
         "__TREND_VALUES_JSON__": json.dumps(trend_values, ensure_ascii=False),
+        "__TREND_TOKEN_VALUES_JSON__": json.dumps(trend_token_values, ensure_ascii=False),
         "__TREND_DATES_JSON__": json.dumps(trend_dates, ensure_ascii=False),
         "__TREND_WEEKDAYS_JSON__": json.dumps(trend_weekdays, ensure_ascii=False),
         "__TREND_Y_MAX__": str(trend_y_max),

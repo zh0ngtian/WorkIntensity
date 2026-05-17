@@ -5,6 +5,8 @@ import threading
 import time
 from datetime import date, datetime
 
+import token_usage
+
 
 _DB_LOCK = threading.Lock()
 _DB_CONN = None
@@ -19,6 +21,7 @@ _BLOCK_DURATION_SECONDS = 36
 _BLOCKS_PER_DAY = 24 * 100
 _ICLOUD_BACKUP_INTERVAL_SECONDS = 300
 _LAST_ICLOUD_BACKUP_AT = 0.0
+_TOKEN_USAGE_FINGERPRINT_KEY = "token_usage_fingerprint"
 
 
 def _ensure_log_dir():
@@ -69,6 +72,24 @@ def _ensure_tables(conn):
             day TEXT NOT NULL,
             block_index INTEGER NOT NULL,
             PRIMARY KEY (day, block_index)
+        ) WITHOUT ROWID
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_usage_hourly (
+            day TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            total_tokens INTEGER NOT NULL,
+            PRIMARY KEY (day, hour)
+        ) WITHOUT ROWID
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_usage_cache_meta (
+            key TEXT NOT NULL PRIMARY KEY,
+            value TEXT NOT NULL
         ) WITHOUT ROWID
         """
     )
@@ -193,6 +214,96 @@ def get_activity_seconds_for_date(value):
             (day,),
         ).fetchall()
     return [_block_index_to_second(row[0]) for row in rows]
+
+
+def _get_token_usage_fingerprint(conn):
+    row = conn.execute(
+        "SELECT value FROM token_usage_cache_meta WHERE key = ?",
+        (_TOKEN_USAGE_FINGERPRINT_KEY,),
+    ).fetchone()
+    return row[0] if row is not None else None
+
+
+def _replace_token_usage_cache(conn, fingerprint, hourly_totals):
+    try:
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM token_usage_hourly")
+        if hourly_totals:
+            conn.executemany(
+                """
+                INSERT INTO token_usage_hourly(day, hour, total_tokens)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (day, hour, total_tokens)
+                    for (day, hour), total_tokens in sorted(hourly_totals.items())
+                ],
+            )
+        conn.execute(
+            """
+            INSERT INTO token_usage_cache_meta(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (_TOKEN_USAGE_FINGERPRINT_KEY, fingerprint),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def refresh_token_usage_cache_if_needed(roots=None, force=False):
+    conn = get_connection()
+    file_records = token_usage.iter_jsonl_file_records(roots)
+    fingerprint = token_usage.build_fingerprint(file_records)
+
+    with _DB_LOCK:
+        cached_fingerprint = _get_token_usage_fingerprint(conn)
+        if not force and cached_fingerprint == fingerprint:
+            return False
+
+    aggregated = token_usage.aggregate_hourly_token_usage(roots)
+    with _DB_LOCK:
+        _ensure_tables(conn)
+        _replace_token_usage_cache(
+            conn,
+            aggregated["fingerprint"],
+            aggregated["hourly_totals"],
+        )
+
+    sync_to_icloud()
+    return True
+
+
+def get_token_usage_by_date_range(start_value, end_value, roots=None):
+    start_day = _date_to_day_key(start_value)
+    end_day = _date_to_day_key(end_value)
+    refresh_token_usage_cache_if_needed(roots=roots)
+
+    conn = get_connection()
+    with _DB_LOCK:
+        rows = conn.execute(
+            """
+            SELECT day, hour, total_tokens
+            FROM token_usage_hourly
+            WHERE day >= ? AND day <= ?
+            ORDER BY day ASC, hour ASC
+            """,
+            (start_day, end_day),
+        ).fetchall()
+
+    usage_by_day = {}
+    current_day = _normalize_date(start_value)
+    final_day = _normalize_date(end_value)
+    while current_day <= final_day:
+        usage_by_day[_date_to_day_key(current_day)] = [0 for _ in range(24)]
+        current_day = date.fromordinal(current_day.toordinal() + 1)
+
+    for day, hour, total_tokens in rows:
+        if day in usage_by_day and 0 <= hour < 24:
+            usage_by_day[day][hour] = int(total_tokens or 0)
+    return usage_by_day
 
 
 def import_all_legacy_logs():
