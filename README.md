@@ -35,6 +35,8 @@ python3 main.py
 
 对每个 JSONL 文件，程序读取 `event_msg.payload.type == "token_count"` 事件里的 `info.total_token_usage.total_tokens`，按累计值的正向增量计算实际用量，并按本地日期与小时聚合。
 
+如果 token 事件同时包含足够的 `last_token_usage` / `total_token_usage` 细项，程序会为该事件生成不依赖 timestamp 的内容指纹。这样 Codex fork 或 subagent replay 复制历史 `token_count` 事件时，重复历史用量会被折叠，只保留 fork 后新增的 token。
+
 ## 数据存储与 iCloud 备份
 
 程序使用 SQLite 存储活动数据，本地数据库文件位于 `log/work_intensity.sqlite3`。

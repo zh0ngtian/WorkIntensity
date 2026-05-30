@@ -10,20 +10,50 @@ import storage
 import token_usage
 
 
-def _token_count_line(timestamp, total_tokens):
+def _token_count_line(timestamp, total_tokens, last_usage=None, total_usage=None, model=None):
+    info = {
+        "total_token_usage": total_usage or {
+            "total_tokens": total_tokens,
+        }
+    }
+    if "total_tokens" not in info["total_token_usage"]:
+        info["total_token_usage"]["total_tokens"] = total_tokens
+    if last_usage is not None:
+        info["last_token_usage"] = last_usage
+    if model is not None:
+        info["model"] = model
+
     return json.dumps(
         {
             "type": "event_msg",
             "timestamp": timestamp,
             "payload": {
                 "type": "token_count",
-                "info": {
-                    "total_token_usage": {
-                        "total_tokens": total_tokens,
-                    }
-                },
+                "info": info,
             },
         }
+    )
+
+
+def _detailed_token_count_line(timestamp, total_tokens, input_tokens, last_input_tokens):
+    return _token_count_line(
+        timestamp,
+        total_tokens,
+        last_usage={
+            "input_tokens": last_input_tokens,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "total_tokens": last_input_tokens,
+        },
+        total_usage={
+            "input_tokens": input_tokens,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "total_tokens": total_tokens,
+        },
+        model="gpt-5",
     )
 
 
@@ -63,6 +93,71 @@ class TokenUsageAggregationTest(unittest.TestCase):
             self.assertEqual(hourly_totals[_bucket("2026-05-16T23:30:00Z")], 50)
             self.assertEqual(hourly_totals[_bucket("2026-05-17T00:30:00Z")], 20)
             self.assertEqual(sum(hourly_totals.values()), 320)
+
+    def test_codex_fork_replayed_token_counts_are_deduped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            sessions.mkdir()
+
+            original = sessions / "a-original.jsonl"
+            original.write_text(
+                "\n".join(
+                    [
+                        _detailed_token_count_line("2026-05-16T00:00:00Z", 100, 100, 100),
+                        _detailed_token_count_line("2026-05-16T01:00:00Z", 250, 250, 150),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            fork = sessions / "z-fork.jsonl"
+            fork.write_text(
+                "\n".join(
+                    [
+                        _detailed_token_count_line("2026-05-17T02:00:00Z", 100, 100, 100),
+                        _detailed_token_count_line("2026-05-17T02:10:00Z", 250, 250, 150),
+                        _detailed_token_count_line("2026-05-17T03:00:00Z", 400, 400, 150),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = token_usage.aggregate_hourly_token_usage([root])
+            hourly_totals = result["hourly_totals"]
+
+            self.assertEqual(hourly_totals[_bucket("2026-05-16T00:00:00Z")], 100)
+            self.assertEqual(hourly_totals[_bucket("2026-05-16T01:00:00Z")], 150)
+            self.assertEqual(hourly_totals[_bucket("2026-05-17T03:00:00Z")], 150)
+            self.assertNotIn(_bucket("2026-05-17T02:00:00Z"), hourly_totals)
+            self.assertEqual(sum(hourly_totals.values()), 400)
+
+    def test_codex_fork_dedupe_keeps_earliest_timestamp_when_replay_sorts_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            sessions.mkdir()
+
+            replay = sessions / "a-replay.jsonl"
+            replay.write_text(
+                _detailed_token_count_line("2026-05-17T02:00:00Z", 100, 100, 100) + "\n",
+                encoding="utf-8",
+            )
+
+            original = sessions / "z-original.jsonl"
+            original.write_text(
+                _detailed_token_count_line("2026-05-16T00:00:00Z", 100, 100, 100) + "\n",
+                encoding="utf-8",
+            )
+
+            result = token_usage.aggregate_hourly_token_usage([root])
+            hourly_totals = result["hourly_totals"]
+
+            self.assertEqual(hourly_totals[_bucket("2026-05-16T00:00:00Z")], 100)
+            self.assertNotIn(_bucket("2026-05-17T02:00:00Z"), hourly_totals)
+            self.assertEqual(sum(hourly_totals.values()), 100)
 
 
 class StorageTokenUsageCacheTest(unittest.TestCase):
