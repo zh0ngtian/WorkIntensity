@@ -59,6 +59,12 @@ def format_token_count(value):
     return str(value)
 
 
+def format_icloud_backup_time(value):
+    if value is None:
+        return "未备份"
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
 def slice_recent_trend_values(values, num_days, trend_days):
     return values[:num_days][-trend_days:]
 
@@ -173,6 +179,7 @@ def plot_fig():
     average_daily_tokens, peak_daily_tokens, today_tokens = calculate_token_metric_values(displayed_dates, token_displayed_values)
     current_local_date_str = today_date.strftime("%Y-%m-%d")
     current_local_hour = datetime.now().hour
+    icloud_backup_time = storage.get_icloud_backup_time()
 
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plot_template.html")
     with open(template_path, "r", encoding="utf-8") as template_file:
@@ -186,6 +193,7 @@ def plot_fig():
         "__AVERAGE_DAILY_TOKENS__": format_token_count(average_daily_tokens),
         "__PEAK_DAILY_TOKENS__": format_token_count(peak_daily_tokens),
         "__TODAY_TOKENS__": format_token_count(today_tokens),
+        "__ICLOUD_BACKUP_TIME__": format_icloud_backup_time(icloud_backup_time),
         "__TREND_WEEKS__": str(trend_weeks),
         "__TREND_TOTAL__": str(trend_total),
         "__WEEK_RANGES_JSON__": json.dumps(xlabels, ensure_ascii=False),

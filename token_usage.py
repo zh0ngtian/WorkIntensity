@@ -149,7 +149,7 @@ def _extract_token_event(obj, fallback_model=""):
 def _iter_token_events(path):
     try:
         fallback_model = ""
-        with Path(path).open("r", encoding="utf-8") as file:
+        with Path(path).open("r", encoding="utf-8", errors="replace") as file:
             for line in file:
                 try:
                     obj = json.loads(line)

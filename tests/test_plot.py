@@ -31,6 +31,10 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(plot.format_token_count(1200), "1.2K")
         self.assertEqual(plot.format_token_count(2_500_000), "2.5M")
 
+    def test_format_icloud_backup_time(self):
+        self.assertEqual(plot.format_icloud_backup_time(None), "未备份")
+        self.assertEqual(plot.format_icloud_backup_time(datetime(2026, 6, 1, 14, 5)), "2026-06-01 14:05")
+
     def test_last_several_days_token_totals_match_hourly_arrays(self):
         old_get_token_usage = plot.storage.get_token_usage_by_date_range
         old_get_activity = plot.storage.get_activity_seconds_for_date

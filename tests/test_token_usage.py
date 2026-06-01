@@ -94,6 +94,22 @@ class TokenUsageAggregationTest(unittest.TestCase):
             self.assertEqual(hourly_totals[_bucket("2026-05-17T00:30:00Z")], 20)
             self.assertEqual(sum(hourly_totals.values()), 320)
 
+    def test_aggregate_hourly_usage_skips_invalid_utf8_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "sessions" / "session.jsonl"
+            path.parent.mkdir()
+            path.write_bytes(
+                b"\xa3\n"
+                + (_token_count_line("2026-05-16T00:15:00Z", 100) + "\n").encode("utf-8")
+            )
+
+            result = token_usage.aggregate_hourly_token_usage([root])
+            hourly_totals = result["hourly_totals"]
+
+            self.assertEqual(hourly_totals[_bucket("2026-05-16T00:15:00Z")], 100)
+            self.assertEqual(sum(hourly_totals.values()), 100)
+
     def test_codex_fork_replayed_token_counts_are_deduped(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -224,6 +240,38 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         rebuilt = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
         rebuilt_total = sum(next(iter(rebuilt.values())))
         self.assertEqual(rebuilt_total, 250)
+
+    def test_icloud_backup_failure_does_not_raise(self):
+        storage.get_connection()
+        icloud_root = Path(self.tmp.name) / "icloud"
+        icloud_backup_dir = icloud_root / "WorkIntensity"
+        icloud_backup_dir.mkdir(parents=True)
+        storage._ICLOUD_ROOT_DIR = str(icloud_root)
+        storage._ICLOUD_BACKUP_DIR = str(icloud_backup_dir)
+        storage._ICLOUD_DB_PATH = str(icloud_backup_dir / "work_intensity.sqlite3")
+
+        original_connect = storage.sqlite3.connect
+
+        def failing_connect(path, *args, **kwargs):
+            if path == storage._ICLOUD_DB_PATH + ".tmp":
+                raise sqlite3.OperationalError("unable to open database file")
+            return original_connect(path, *args, **kwargs)
+
+        try:
+            storage.sqlite3.connect = failing_connect
+            self.assertFalse(storage.sync_to_icloud(force=True))
+        finally:
+            storage.sqlite3.connect = original_connect
+
+    def test_get_icloud_backup_time_uses_backup_file_mtime(self):
+        backup_file = self.log_dir / "backup.sqlite3"
+        backup_file.parent.mkdir()
+        backup_file.write_text("", encoding="utf-8")
+        expected_timestamp = datetime(2026, 6, 1, 14, 5).timestamp()
+        os.utime(backup_file, (expected_timestamp, expected_timestamp))
+        storage._ICLOUD_DB_PATH = str(backup_file)
+
+        self.assertEqual(storage.get_icloud_backup_time(), datetime.fromtimestamp(expected_timestamp))
 
 
 if __name__ == "__main__":

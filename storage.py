@@ -39,6 +39,15 @@ def _ensure_icloud_backup_dir():
     return True
 
 
+def get_icloud_backup_time():
+    try:
+        if not os.path.exists(_ICLOUD_DB_PATH):
+            return None
+        return datetime.fromtimestamp(os.path.getmtime(_ICLOUD_DB_PATH))
+    except OSError:
+        return None
+
+
 def _normalize_date(value):
     if isinstance(value, datetime):
         return value.date()
@@ -361,6 +370,8 @@ def sync_to_icloud(force=False):
     global _LAST_ICLOUD_BACKUP_AT
     if not _ensure_icloud_backup_dir():
         return False
+    if not os.access(_ICLOUD_BACKUP_DIR, os.W_OK):
+        return False
 
     now = time.monotonic()
     if not force and now - _LAST_ICLOUD_BACKUP_AT < _ICLOUD_BACKUP_INTERVAL_SECONDS:
@@ -382,6 +393,8 @@ def sync_to_icloud(force=False):
         os.replace(backup_temp_path, backup_path)
         _LAST_ICLOUD_BACKUP_AT = now
         return True
+    except (OSError, sqlite3.Error):
+        return False
     finally:
         if backup_conn is not None:
             backup_conn.close()
