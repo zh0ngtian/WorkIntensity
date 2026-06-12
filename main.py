@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 import sys
+from datetime import datetime
 
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
@@ -87,11 +88,19 @@ def main():
 
     import plot
     import record
+    import storage
+
+    STATUS_REFRESH_SECONDS = 10 * 60
+    STATUS_TITLE_FONT_SIZE = 14
 
     class WorkIntensityStatusBarApp(rumps.App):
         def __init__(self):
-            super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title=None)
+            super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title="0.0h")
             self._set_status_bar_symbol_icon()
+            self._update_work_hours_title()
+            rumps.events.before_start.register(self._update_work_hours_title)
+            self._status_refresh_timer = rumps.Timer(self._update_work_hours_title, STATUS_REFRESH_SECONDS)
+            self._status_refresh_timer.start()
 
             self.recorder = record.InputRecorder()
             self.recorder.start()
@@ -132,6 +141,26 @@ def main():
                 self._icon = f"sf-symbol:{symbol_name}"
                 self._icon_nsimage = image
                 return
+
+        def _update_work_hours_title(self, _=None):
+            try:
+                today_seconds = storage.get_activity_seconds_for_date(datetime.now())
+                title = f"{len(today_seconds) / 100:.1f}h"
+            except Exception:
+                title = "--h"
+            self.title = title
+            self._set_status_bar_title_font(title)
+
+        def _set_status_bar_title_font(self, title):
+            try:
+                import AppKit
+
+                font = AppKit.NSFont.systemFontOfSize_(STATUS_TITLE_FONT_SIZE)
+                attributes = {AppKit.NSFontAttributeName: font}
+                attributed_title = AppKit.NSAttributedString.alloc().initWithString_attributes_(title, attributes)
+                self._nsapp.nsstatusitem.button().setAttributedTitle_(attributed_title)
+            except Exception:
+                pass
 
         @rumps.clicked("Plot")
         def plot_button(self, _):
