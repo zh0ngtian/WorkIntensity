@@ -8,10 +8,9 @@
     html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(180deg, #f8fafc 0%, #f3f4f6 100%); color: #111827; }
     .container { height: 100%; display: grid; grid-template-rows: 2fr 1fr; gap: 14px; padding: 14px; box-sizing: border-box; }
     .panel { border: 1px solid rgba(226, 232, 240, 0.9); border-radius: 16px; padding: 14px; box-sizing: border-box; background: rgba(255, 255, 255, 0.9); box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); backdrop-filter: blur(6px); }
-    .title { font-size: 18px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
-    .subtitle { font-size: 12px; color: #6b7280; margin: 4px 0 0 0; }
+    .subtitle { font-size: 12px; color: #6b7280; margin: 0; }
     .top { display: grid; grid-template-rows: auto 1fr auto; gap: 10px; height: 100%; }
-    .bottom { display: grid; grid-template-rows: auto 1fr; gap: 8px; height: 100%; }
+    .bottom { display: grid; grid-template-rows: 1fr; height: 100%; }
     .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .metrics { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .metric { min-width: 86px; padding: 8px 10px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); border: 1px solid rgba(199, 210, 254, 0.7); }
@@ -33,7 +32,6 @@
       <div class="top">
         <div class="section-head">
           <div>
-            <p class="title">最近 __WEEK_NUMBER__ 周工作时长</p>
             <p class="subtitle">按天展示近半年活跃时长分布，颜色越深表示当天越活跃。iCloud 备份：__ICLOUD_BACKUP_TIME__</p>
           </div>
           <div class="metrics">
@@ -79,7 +77,6 @@
     </div>
     <div class="panel">
       <div class="bottom">
-        <p class="title">最近 __TREND_WEEKS__ 周每日工作时长趋势</p>
         <div id="bars"></div>
       </div>
     </div>
@@ -126,6 +123,27 @@
       if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
       if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
       return `${Math.round(n)}`;
+    }
+
+    function formatTokenAxisValue(value) {
+      const scale = trendTokenAxisScale || {};
+      const maxValue = Math.max(0, Number(scale.maxValue) || 0);
+      const segmentCount = Math.max(1, Number(scale.segmentCount) || 1);
+      if (maxValue <= 0) return '0';
+      const axisMax = Math.max(1, Number(scale.axisMax) || 1);
+      const n = Math.max(0, Math.min(axisMax, Number(value) || 0));
+      const segmentWidth = maxValue / segmentCount;
+      let axisStart = 0;
+      for (let index = 0; index < segmentCount; index += 1) {
+        const segmentHeight = segmentCount - index;
+        const axisEnd = axisStart + segmentHeight;
+        if (n <= axisEnd || index === segmentCount - 1) {
+          const ratio = Math.max(0, Math.min(1, (n - axisStart) / segmentHeight));
+          return formatTokenCount(segmentWidth * (index + ratio));
+        }
+        axisStart = axisEnd;
+      }
+      return formatTokenCount(maxValue);
     }
 
     function dailySparklineSvg(activityValues, tokenValues, dateStr) {
@@ -362,6 +380,8 @@
     const trendLabels = __TREND_LABELS_JSON__;
     const trendValues = __TREND_VALUES_JSON__;
     const trendTokenValues = __TREND_TOKEN_VALUES_JSON__;
+    const trendTokenAxisScale = __TREND_TOKEN_AXIS_SCALE_JSON__;
+    const trendTokenAxisValues = trendTokenAxisScale.values || trendTokenValues.map(() => 0);
     const trendDates = __TREND_DATES_JSON__;
     const trendWeekdays = __TREND_WEEKDAYS_JSON__;
     const trendSeriesData = trendValues.map((value, index) => ({
@@ -370,10 +390,12 @@
       weekday: trendWeekdays[index]
     }));
     const trendTokenSeriesData = trendTokenValues.map((value, index) => ({
-      value,
+      value: trendTokenAxisValues[index] || 0,
+      rawValue: value,
       date: trendDates[index],
       weekday: trendWeekdays[index]
     }));
+    const trendTokenAxisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
 
     barsChart.setOption({
       legend: {
@@ -395,7 +417,10 @@
           const date = data.date || trendDates[item.dataIndex] || item.axisValue;
           const weekday = data.weekday || trendWeekdays[item.dataIndex] || '';
           const lines = items.map((entry) => {
-            const value = typeof entry.data.value === 'number' ? entry.data.value : entry.value;
+            const entryData = entry.data || {};
+            const value = entry.seriesName === 'Token 用量'
+              ? (typeof entryData.rawValue === 'number' ? entryData.rawValue : entry.value)
+              : (typeof entryData.value === 'number' ? entryData.value : entry.value);
             const suffix = entry.seriesName === 'Token 用量' ? '' : 'h';
             const displayValue = entry.seriesName === 'Token 用量' ? formatTokenCount(value) : value;
             return `${entry.marker}${entry.seriesName}: ${displayValue}${suffix}`;
@@ -431,8 +456,10 @@
         {
           type: 'value',
           min: 0,
+          max: trendTokenAxisMax,
+          splitNumber: Math.max(1, Number(trendTokenAxisScale.segmentCount) || 1),
           axisLabel: {
-            formatter: (value) => formatTokenCount(value),
+            formatter: (value) => formatTokenAxisValue(value),
             fontSize: 12
           },
           splitLine: {

@@ -31,6 +31,21 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(plot.format_token_count(1200), "1.2K")
         self.assertEqual(plot.format_token_count(2_500_000), "2.5M")
 
+    def test_token_axis_scale_uses_even_raw_segments_with_decreasing_axis_steps(self):
+        scale = plot.build_token_axis_scale([0, 20, 40, 60, 80, 100])
+
+        self.assertEqual(scale["maxValue"], 100)
+        self.assertEqual(scale["segmentCount"], 5)
+        self.assertEqual(scale["axisMax"], 15)
+        self.assertEqual(scale["values"], [0, 5, 9, 12, 14, 15])
+
+    def test_token_axis_scale_handles_all_zero_values(self):
+        scale = plot.build_token_axis_scale([0, None, 0])
+
+        self.assertEqual(scale["values"], [0, 0, 0])
+        self.assertEqual(scale["maxValue"], 0)
+        self.assertEqual(scale["axisMax"], 1)
+
     def test_format_icloud_backup_time(self):
         self.assertEqual(plot.format_icloud_backup_time(None), "未备份")
         self.assertEqual(plot.format_icloud_backup_time(datetime(2026, 6, 1, 14, 5)), "2026-06-01 14:05")

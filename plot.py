@@ -8,6 +8,9 @@ import chinese_calendar
 import storage
 
 
+TOKEN_AXIS_SEGMENT_COUNT = 5
+
+
 def _build_active_block_record(seconds_list, block_duration, period_count, blocks_per_period):
     active_block_record = [[0 for _ in range(blocks_per_period)] for _ in range(period_count)]
     seconds_per_period = block_duration * blocks_per_period
@@ -57,6 +60,42 @@ def format_token_count(value):
     if value >= 1_000:
         return f"{value / 1_000:.1f}K"
     return str(value)
+
+
+def build_token_axis_scale(values, segment_count=TOKEN_AXIS_SEGMENT_COUNT):
+    raw_values = [max(0, int(value or 0)) for value in values]
+    max_value = max(raw_values, default=0)
+    if max_value <= 0:
+        return {
+            "values": [0 for _value in raw_values],
+            "maxValue": 0,
+            "segmentCount": 1,
+            "axisMax": 1,
+        }
+
+    segment_count = max(1, min(int(segment_count), max_value))
+    segment_width = max_value / segment_count
+    axis_offsets = [0]
+    for index in range(segment_count):
+        axis_offsets.append(axis_offsets[-1] + segment_count - index)
+
+    axis_values = []
+    for value in raw_values:
+        if value <= 0:
+            axis_values.append(0)
+            continue
+        segment_index = min(segment_count - 1, int(value / segment_width))
+        segment_start = segment_width * segment_index
+        segment_height = segment_count - segment_index
+        segment_ratio = (value - segment_start) / segment_width if segment_width else 0
+        axis_values.append(round(axis_offsets[segment_index] + segment_ratio * segment_height, 6))
+
+    return {
+        "values": axis_values,
+        "maxValue": max_value,
+        "segmentCount": segment_count,
+        "axisMax": axis_offsets[-1],
+    }
 
 
 def format_icloud_backup_time(value):
@@ -159,6 +198,7 @@ def plot_fig():
     trend_labels = last_several_days_data[-trend_days:]
     trend_values = slice_recent_trend_values(last_several_days_activities_daily, num_days, trend_days)
     trend_token_values = slice_recent_trend_values(last_several_days_tokens_daily, num_days, trend_days)
+    trend_token_axis_scale = build_token_axis_scale(trend_token_values)
     trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
     trend_weekdays = [ylabels[(today_date - timedelta(days=trend_days - 1 - i)).weekday()] for i in range(trend_days)]
     trend_max = max(trend_values, default=0)
@@ -205,6 +245,7 @@ def plot_fig():
         "__TREND_LABELS_JSON__": json.dumps(trend_labels, ensure_ascii=False),
         "__TREND_VALUES_JSON__": json.dumps(trend_values, ensure_ascii=False),
         "__TREND_TOKEN_VALUES_JSON__": json.dumps(trend_token_values, ensure_ascii=False),
+        "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
         "__TREND_DATES_JSON__": json.dumps(trend_dates, ensure_ascii=False),
         "__TREND_WEEKDAYS_JSON__": json.dumps(trend_weekdays, ensure_ascii=False),
         "__TREND_Y_MAX__": str(trend_y_max),
