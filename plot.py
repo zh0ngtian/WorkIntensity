@@ -116,18 +116,25 @@ def get_last_several_days_activities(num_days):
     start_of_last_several_days = datetime.now().date() - timedelta(days=num_days - 1)
     end_of_last_several_days = start_of_last_several_days + timedelta(days=num_days - 1)
     token_usage_by_day = storage.get_token_usage_by_date_range(start_of_last_several_days, end_of_last_several_days)
+    token_project_usage_by_day = storage.get_token_project_usage_by_date_range(
+        start_of_last_several_days,
+        end_of_last_several_days,
+    )
     last_several_days_date = []
     last_several_days_activities_daily = []
     last_several_days_tokens_daily = []
     day_seconds_map = {}
     day_token_map = {}
+    day_project_token_map = {}
     for i in range(num_days):
         current_date = start_of_last_several_days + timedelta(days=i)
         day_key = current_date.strftime("%Y-%m-%d")
         seconds_list = storage.get_activity_seconds_for_date(current_date)
         hourly_tokens = token_usage_by_day.get(day_key, [0 for _ in range(24)])
+        project_tokens = token_project_usage_by_day.get(day_key, [])
         day_seconds_map[day_key] = seconds_list
         day_token_map[day_key] = hourly_tokens
+        day_project_token_map[day_key] = project_tokens
         last_several_days_date.append(current_date.strftime("%m-%d"))
         last_several_days_activities_daily.append(calculate_daily_work_hours(seconds_list) if seconds_list else 0)
         last_several_days_tokens_daily.append(calculate_daily_token_usage(hourly_tokens))
@@ -137,6 +144,7 @@ def get_last_several_days_activities(num_days):
         day_seconds_map,
         last_several_days_tokens_daily,
         day_token_map,
+        day_project_token_map,
     )
 
 
@@ -151,6 +159,7 @@ def plot_fig():
         day_seconds_map,
         last_several_days_tokens_daily,
         day_token_map,
+        day_project_token_map,
     ) = get_last_several_days_activities(num_days)
 
     for i in range(num_days, week_number * 7):
@@ -179,6 +188,7 @@ def plot_fig():
             day_key = cell_date.strftime("%Y-%m-%d")
             hourly_percent = calculate_hourly_percent(day_seconds_map.get(day_key, []))
             hourly_tokens = day_token_map.get(day_key, [0 for _ in range(24)])
+            project_tokens = day_project_token_map.get(day_key, [])
             daily_tokens = calculate_daily_token_usage(hourly_tokens)
             heatmap_data.append(
                 [
@@ -190,6 +200,7 @@ def plot_fig():
                     ylabels[cell_date.weekday()],
                     daily_tokens,
                     hourly_tokens,
+                    project_tokens,
                 ]
             )
 
@@ -201,6 +212,9 @@ def plot_fig():
     trend_token_axis_scale = build_token_axis_scale(trend_token_values)
     trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
     trend_weekdays = [ylabels[(today_date - timedelta(days=trend_days - 1 - i)).weekday()] for i in range(trend_days)]
+    trend_hourly_values = [calculate_hourly_percent(day_seconds_map.get(day_key, [])) for day_key in trend_dates]
+    trend_hourly_token_values = [day_token_map.get(day_key, [0 for _ in range(24)]) for day_key in trend_dates]
+    trend_project_token_values = [day_project_token_map.get(day_key, []) for day_key in trend_dates]
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
@@ -245,6 +259,9 @@ def plot_fig():
         "__TREND_LABELS_JSON__": json.dumps(trend_labels, ensure_ascii=False),
         "__TREND_VALUES_JSON__": json.dumps(trend_values, ensure_ascii=False),
         "__TREND_TOKEN_VALUES_JSON__": json.dumps(trend_token_values, ensure_ascii=False),
+        "__TREND_HOURLY_VALUES_JSON__": json.dumps(trend_hourly_values, ensure_ascii=False),
+        "__TREND_HOURLY_TOKEN_VALUES_JSON__": json.dumps(trend_hourly_token_values, ensure_ascii=False),
+        "__TREND_PROJECT_TOKEN_VALUES_JSON__": json.dumps(trend_project_token_values, ensure_ascii=False),
         "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
         "__TREND_DATES_JSON__": json.dumps(trend_dates, ensure_ascii=False),
         "__TREND_WEEKDAYS_JSON__": json.dumps(trend_weekdays, ensure_ascii=False),

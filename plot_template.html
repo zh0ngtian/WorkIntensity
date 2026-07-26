@@ -101,13 +101,15 @@
       const hourly = d[3] || [];
       const tokenTotal = d[6] || 0;
       const hourlyTokens = d[7] || [];
+      const projectTokens = d[8] || [];
       return {
         value: [x, y, v],
         date: d[4],
         weekday: d[5],
         hourly,
         tokenTotal,
-        hourlyTokens
+        hourlyTokens,
+        projectTokens
       };
     });
     const weeks = Array.from({length: weekRanges.length}, (_, i) => i);
@@ -123,6 +125,86 @@
       if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
       if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
       return `${Math.round(n)}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function shortenProjectName(value) {
+      const text = String(value || 'unknown');
+      return text.length > 22 ? `${text.slice(0, 19)}...` : text;
+    }
+
+    function pieSlicePath(cx, cy, r, startAngle, endAngle) {
+      const startX = cx + Math.cos(startAngle) * r;
+      const startY = cy + Math.sin(startAngle) * r;
+      const endX = cx + Math.cos(endAngle) * r;
+      const endY = cy + Math.sin(endAngle) * r;
+      const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+      return `M ${cx} ${cy} L ${startX.toFixed(2)} ${startY.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${endX.toFixed(2)} ${endY.toFixed(2)} Z`;
+    }
+
+    function dailyProjectPieSvg(projectTokens) {
+      const rows = (projectTokens || [])
+        .map((item) => ({
+          project: item.project || 'unknown',
+          tokens: Math.max(0, Number(item.tokens) || 0)
+        }))
+        .filter((item) => item.tokens > 0);
+      const total = rows.reduce((sum, item) => sum + item.tokens, 0);
+      if (!total) {
+        return `<div style="width: 560px; box-sizing: border-box; padding: 14px 16px; border: 1px solid #e5e7eb; border-radius: 8px; color: #9ca3af; background: #fff;">暂无项目 Token 明细</div>`;
+      }
+
+      const colors = ['#db2777', '#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#0891b2', '#dc2626', '#4b5563', '#65a30d', '#c026d3'];
+      const w = 560;
+      const rowH = 22;
+      const h = Math.max(156, rows.length * rowH + 26);
+      const cx = 76;
+      const cy = h / 2 + 6;
+      const r = 52;
+      let angle = -Math.PI / 2;
+
+      const slices = rows.map((item, index) => {
+        const sliceAngle = (item.tokens / total) * Math.PI * 2;
+        const color = colors[index % colors.length];
+        if (sliceAngle >= Math.PI * 2 - 0.0001) {
+          return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"></circle>`;
+        }
+        const path = pieSlicePath(cx, cy, r, angle, angle + sliceAngle);
+        angle += sliceAngle;
+        return `<path d="${path}" fill="${color}" stroke="#fff" stroke-width="1.5"></path>`;
+      }).join('');
+
+      const legend = rows.map((item, index) => {
+        const color = colors[index % colors.length];
+        const y = 34 + index * rowH;
+        const percent = ((item.tokens / total) * 100).toFixed(1);
+        const label = escapeHtml(shortenProjectName(item.project));
+        const fullLabel = escapeHtml(item.project);
+        return `<g>
+          <title>${fullLabel}: ${formatTokenCount(item.tokens)} (${percent}%)</title>
+          <rect x="150" y="${y - 10}" width="10" height="10" rx="2" fill="${color}"></rect>
+          <text x="168" y="${y}" font-size="12" fill="#374151">${label}</text>
+          <text x="${w - 10}" y="${y}" text-anchor="end" font-size="12" fill="#6b7280">${formatTokenCount(item.tokens)} · ${percent}%</text>
+        </g>`;
+      }).join('');
+
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="#ffffff"></rect>
+        <text x="12" y="20" font-size="12" font-weight="700" fill="#111827">项目 Token 占比</text>
+        ${slices}
+        <circle cx="${cx}" cy="${cy}" r="22" fill="#fff"></circle>
+        <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="12" font-weight="700" fill="#111827">${formatTokenCount(total)}</text>
+        <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" fill="#6b7280">total</text>
+        ${legend}
+      </svg>`;
     }
 
     function formatTokenAxisValue(value) {
@@ -222,6 +304,22 @@
       </svg>`;
     }
 
+    function dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens) {
+      const dailySvg = dailySparklineSvg(hourly, hourlyTokens, date);
+      const projectPieSvg = dailyProjectPieSvg(projectTokens);
+      return `<div style="min-width: 580px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
+          <div style="font-size: 14px; font-weight: 700;">${date} ${weekday}</div>
+          <div style="display:flex; align-items:baseline; gap:12px;">
+            <div style="font-size: 18px; font-weight: 800; color: #166534;">${workHours}h</div>
+          </div>
+        </div>
+        <div style="margin-bottom: 6px;">${dailySvg}</div>
+        <div style="margin-bottom: 6px;">${projectPieSvg}</div>
+        <div style="font-size: 12px; color: #6b7280;">活跃度 / Token 用量趋势（00:00-24:00）</div>
+      </div>`;
+    }
+
     const contribBaseOption = {
       tooltip: {
         position: 'top',
@@ -235,20 +333,9 @@
           const weekday = p.data && p.data.weekday ? p.data.weekday : '';
           const hourly = p.data && p.data.hourly ? p.data.hourly : [];
           const hourlyTokens = p.data && p.data.hourlyTokens ? p.data.hourlyTokens : [];
-          const tokenTotal = p.data && p.data.tokenTotal ? p.data.tokenTotal : 0;
+          const projectTokens = p.data && p.data.projectTokens ? p.data.projectTokens : [];
           const value = p.value && p.value.length ? p.value[2] : 0;
-          const dailySvg = dailySparklineSvg(hourly, hourlyTokens, date);
-          return `<div style="min-width: 580px;">
-            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
-              <div style="font-size: 14px; font-weight: 700;">${date} ${weekday}</div>
-              <div style="display:flex; align-items:baseline; gap:12px;">
-                <div style="font-size: 18px; font-weight: 800; color: #166534;">${value}h</div>
-                <div style="font-size: 18px; font-weight: 800; color: #db2777;">${formatTokenCount(tokenTotal)}</div>
-              </div>
-            </div>
-            <div style="margin-bottom: 6px;">${dailySvg}</div>
-            <div style="font-size: 12px; color: #6b7280;">活跃度 / Token 用量趋势（00:00-24:00）</div>
-          </div>`;
+          return dailyTooltipHtml(date, weekday, value, hourly, hourlyTokens, projectTokens);
         }
       },
       xAxis: {
@@ -380,6 +467,9 @@
     const trendLabels = __TREND_LABELS_JSON__;
     const trendValues = __TREND_VALUES_JSON__;
     const trendTokenValues = __TREND_TOKEN_VALUES_JSON__;
+    const trendHourlyValues = __TREND_HOURLY_VALUES_JSON__;
+    const trendHourlyTokenValues = __TREND_HOURLY_TOKEN_VALUES_JSON__;
+    const trendProjectTokenValues = __TREND_PROJECT_TOKEN_VALUES_JSON__;
     const trendTokenAxisScale = __TREND_TOKEN_AXIS_SCALE_JSON__;
     const trendTokenAxisValues = trendTokenAxisScale.values || trendTokenValues.map(() => 0);
     const trendDates = __TREND_DATES_JSON__;
@@ -387,13 +477,15 @@
     const trendSeriesData = trendValues.map((value, index) => ({
       value,
       date: trendDates[index],
-      weekday: trendWeekdays[index]
+      weekday: trendWeekdays[index],
+      projectTokens: trendProjectTokenValues[index] || []
     }));
     const trendTokenSeriesData = trendTokenValues.map((value, index) => ({
       value: trendTokenAxisValues[index] || 0,
       rawValue: value,
       date: trendDates[index],
-      weekday: trendWeekdays[index]
+      weekday: trendWeekdays[index],
+      projectTokens: trendProjectTokenValues[index] || []
     }));
     const trendTokenAxisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
 
@@ -414,18 +506,14 @@
           const item = items.length ? items[0] : null;
           if (!item) return '';
           const data = item.data || {};
+          const index = item.dataIndex;
           const date = data.date || trendDates[item.dataIndex] || item.axisValue;
           const weekday = data.weekday || trendWeekdays[item.dataIndex] || '';
-          const lines = items.map((entry) => {
-            const entryData = entry.data || {};
-            const value = entry.seriesName === 'Token 用量'
-              ? (typeof entryData.rawValue === 'number' ? entryData.rawValue : entry.value)
-              : (typeof entryData.value === 'number' ? entryData.value : entry.value);
-            const suffix = entry.seriesName === 'Token 用量' ? '' : 'h';
-            const displayValue = entry.seriesName === 'Token 用量' ? formatTokenCount(value) : value;
-            return `${entry.marker}${entry.seriesName}: ${displayValue}${suffix}`;
-          });
-          return `${date} ${weekday}<br/>${lines.join('<br/>')}`;
+          const workHours = trendValues[index] || 0;
+          const hourly = trendHourlyValues[index] || [];
+          const hourlyTokens = trendHourlyTokenValues[index] || [];
+          const projectTokens = trendProjectTokenValues[index] || [];
+          return dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens);
         }
       },
       grid: { top: 28, left: 50, right: 58, bottom: 50 },

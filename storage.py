@@ -96,6 +96,16 @@ def _ensure_tables(conn):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS token_usage_project_daily (
+            day TEXT NOT NULL,
+            project TEXT NOT NULL,
+            total_tokens INTEGER NOT NULL,
+            PRIMARY KEY (day, project)
+        ) WITHOUT ROWID
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS token_usage_cache_meta (
             key TEXT NOT NULL PRIMARY KEY,
             value TEXT NOT NULL
@@ -233,10 +243,11 @@ def _get_token_usage_fingerprint(conn):
     return row[0] if row is not None else None
 
 
-def _replace_token_usage_cache(conn, fingerprint, hourly_totals):
+def _replace_token_usage_cache(conn, fingerprint, hourly_totals, project_daily_totals):
     try:
         conn.execute("BEGIN")
         conn.execute("DELETE FROM token_usage_hourly")
+        conn.execute("DELETE FROM token_usage_project_daily")
         if hourly_totals:
             conn.executemany(
                 """
@@ -246,6 +257,17 @@ def _replace_token_usage_cache(conn, fingerprint, hourly_totals):
                 [
                     (day, hour, total_tokens)
                     for (day, hour), total_tokens in sorted(hourly_totals.items())
+                ],
+            )
+        if project_daily_totals:
+            conn.executemany(
+                """
+                INSERT INTO token_usage_project_daily(day, project, total_tokens)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (day, project, total_tokens)
+                    for (day, project), total_tokens in sorted(project_daily_totals.items())
                 ],
             )
         conn.execute(
@@ -279,6 +301,7 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
             conn,
             aggregated["fingerprint"],
             aggregated["hourly_totals"],
+            aggregated["project_daily_totals"],
         )
 
     sync_to_icloud()
@@ -312,6 +335,41 @@ def get_token_usage_by_date_range(start_value, end_value, roots=None):
     for day, hour, total_tokens in rows:
         if day in usage_by_day and 0 <= hour < 24:
             usage_by_day[day][hour] = int(total_tokens or 0)
+    return usage_by_day
+
+
+def get_token_project_usage_by_date_range(start_value, end_value, roots=None):
+    start_day = _date_to_day_key(start_value)
+    end_day = _date_to_day_key(end_value)
+    refresh_token_usage_cache_if_needed(roots=roots)
+
+    conn = get_connection()
+    with _DB_LOCK:
+        rows = conn.execute(
+            """
+            SELECT day, project, total_tokens
+            FROM token_usage_project_daily
+            WHERE day >= ? AND day <= ?
+            ORDER BY day ASC, total_tokens DESC, project ASC
+            """,
+            (start_day, end_day),
+        ).fetchall()
+
+    usage_by_day = {}
+    current_day = _normalize_date(start_value)
+    final_day = _normalize_date(end_value)
+    while current_day <= final_day:
+        usage_by_day[_date_to_day_key(current_day)] = []
+        current_day = date.fromordinal(current_day.toordinal() + 1)
+
+    for day, project, total_tokens in rows:
+        if day in usage_by_day:
+            usage_by_day[day].append(
+                {
+                    "project": project,
+                    "tokens": int(total_tokens or 0),
+                }
+            )
     return usage_by_day
 
 

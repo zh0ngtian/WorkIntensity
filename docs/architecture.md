@@ -7,7 +7,7 @@ WorkIntensity is a macOS status bar app that estimates local activity time and v
 1. `main.py` checks macOS Accessibility and Input Monitoring permissions, then starts a `rumps` status bar app.
 2. `record.py` listens for mouse, keyboard, and meeting-detection activity.
 3. `storage.py` writes activity into SQLite as deduplicated 36-second blocks.
-4. `token_usage.py` scans local Codex JSONL files and aggregates token usage by local day and hour.
+4. `token_usage.py` scans local Codex JSONL files and aggregates token usage by local day/hour and local day/project.
 5. `plot.py` reads the cached activity/token data and renders `log/work_intensity.html` from `plot_template.html`.
 
 ## Data Model
@@ -29,6 +29,14 @@ The local database lives at `log/work_intensity.sqlite3`.
 | `hour` | Local hour, `0` through `23` |
 | `total_tokens` | Aggregated Codex token count for that hour |
 
+`token_usage_project_daily`
+
+| Column | Meaning |
+| --- | --- |
+| `day` | Local date in `YYYY-MM-DD` format |
+| `project` | Project name derived from the Codex session `cwd` basename |
+| `total_tokens` | Aggregated Codex token count for that project on that day |
+
 `token_usage_cache_meta`
 
 | Column | Meaning |
@@ -36,7 +44,7 @@ The local database lives at `log/work_intensity.sqlite3`.
 | `key` | Cache metadata key |
 | `value` | Cache metadata value |
 
-The token cache stores a fingerprint of the local JSONL file list: path, size, and `mtime_ns`. If that fingerprint changes, the hourly token cache is rebuilt.
+The token cache stores a fingerprint of the local JSONL file list: path, size, and `mtime_ns`. If that fingerprint changes, the hourly and daily-project token caches are rebuilt.
 
 ## Token Usage Source
 
@@ -49,12 +57,14 @@ For each JSONL file, token events are `event_msg` entries whose payload has `typ
 
 Within each file, the value is cumulative. The aggregator counts the first total, then only positive deltas between consecutive totals. Duplicate totals are ignored. If the total drops, the new total starts a new sequence.
 
+Project attribution comes from `session_meta.payload.cwd` when present, falling back to `turn_context.payload.cwd` or `unknown`.
+
 ## Visualization
 
 The generated HTML has two main charts:
 
-- A 24-week heatmap of daily work hours. Hovering a day shows a combined hourly chart with activity percentage and token usage.
-- A 12-week daily trend chart with work hours on the left axis and token usage on the right axis.
+- A 24-week heatmap of daily work hours. Hovering a day shows a combined hourly chart with activity percentage and token usage, plus a pie chart for that day's token share by project.
+- A 12-week daily trend chart with work hours on the left axis and token usage on the right axis. Hovering a day also shows that day's project token share.
 
 The HTML uses ECharts from jsDelivr, so chart rendering needs network access unless ECharts is vendored locally.
 

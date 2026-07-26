@@ -9,7 +9,8 @@ DEFAULT_CODEX_ROOTS = (
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 )
-_FINGERPRINT_VERSION = "token_usage_v2_fork_dedupe"
+_FINGERPRINT_VERSION = "token_usage_v3_project_daily"
+_UNKNOWN_PROJECT = "unknown"
 
 
 def iter_jsonl_file_records(roots=None):
@@ -51,6 +52,13 @@ def _parse_local_timestamp(value):
     except ValueError:
         return None
     return parsed.astimezone() if parsed.tzinfo is not None else parsed
+
+
+def _project_name_from_cwd(value):
+    if not isinstance(value, str) or not value.strip():
+        return _UNKNOWN_PROJECT
+    name = Path(value).expanduser().name
+    return name or _UNKNOWN_PROJECT
 
 
 def _extract_total_tokens(obj):
@@ -137,18 +145,19 @@ def _codex_token_dedup_key(info, fallback_model):
     return "codex:" + digest.hexdigest()[:32]
 
 
-def _extract_token_event(obj, fallback_model=""):
+def _extract_token_event(obj, fallback_model="", project=_UNKNOWN_PROJECT):
     total_tokens = _extract_total_tokens(obj)
     if total_tokens is None:
         return None
 
     info = obj["payload"]["info"]
-    return obj.get("timestamp"), total_tokens, _codex_token_dedup_key(info, fallback_model)
+    return obj.get("timestamp"), total_tokens, _codex_token_dedup_key(info, fallback_model), project
 
 
 def _iter_token_events(path):
     try:
         fallback_model = ""
+        project = _UNKNOWN_PROJECT
         with Path(path).open("r", encoding="utf-8", errors="replace") as file:
             for line in file:
                 try:
@@ -156,14 +165,19 @@ def _iter_token_events(path):
                 except json.JSONDecodeError:
                     continue
 
+                payload = obj.get("payload")
+                if obj.get("type") == "session_meta" and isinstance(payload, dict):
+                    project = _project_name_from_cwd(payload.get("cwd"))
+
                 if obj.get("type") == "turn_context":
-                    payload = obj.get("payload")
                     if isinstance(payload, dict):
                         model = payload.get("model")
                         if isinstance(model, str) and model:
                             fallback_model = model
+                        if "cwd" in payload:
+                            project = _project_name_from_cwd(payload.get("cwd"))
 
-                event = _extract_token_event(obj, fallback_model)
+                event = _extract_token_event(obj, fallback_model, project)
                 if event is None:
                     continue
 
@@ -175,11 +189,12 @@ def _iter_token_events(path):
 def aggregate_hourly_token_usage(roots=None):
     file_records = iter_jsonl_file_records(roots)
     hourly_totals = defaultdict(int)
+    project_daily_totals = defaultdict(int)
     deduped_events = {}
 
     for path, _size, _mtime_ns in file_records:
         previous_total = None
-        for timestamp, total_tokens, dedup_key in _iter_token_events(path):
+        for timestamp, total_tokens, dedup_key, project in _iter_token_events(path):
             if previous_total is None:
                 delta = total_tokens
             elif total_tokens > previous_total:
@@ -200,6 +215,7 @@ def aggregate_hourly_token_usage(roots=None):
             if dedup_key is None:
                 day = local_timestamp.strftime("%Y-%m-%d")
                 hourly_totals[(day, local_timestamp.hour)] += delta
+                project_daily_totals[(day, project)] += delta
                 continue
 
             previous_event = deduped_events.get(dedup_key)
@@ -208,13 +224,15 @@ def aggregate_hourly_token_usage(roots=None):
                 or local_timestamp < previous_event[0]
                 or (local_timestamp == previous_event[0] and delta > previous_event[1])
             ):
-                deduped_events[dedup_key] = (local_timestamp, delta)
+                deduped_events[dedup_key] = (local_timestamp, delta, project)
 
-    for local_timestamp, delta in deduped_events.values():
+    for local_timestamp, delta, project in deduped_events.values():
         day = local_timestamp.strftime("%Y-%m-%d")
         hourly_totals[(day, local_timestamp.hour)] += delta
+        project_daily_totals[(day, project)] += delta
 
     return {
         "fingerprint": build_fingerprint(file_records),
         "hourly_totals": dict(hourly_totals),
+        "project_daily_totals": dict(project_daily_totals),
     }

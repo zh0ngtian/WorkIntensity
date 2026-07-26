@@ -8,6 +8,24 @@ from datetime import datetime
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
 
+def _build_status_title(now, storage, format_token_count):
+    try:
+        today_seconds = storage.get_activity_seconds_for_date(now)
+        work_hours_title = f"{len(today_seconds) / 100:.1f}h"
+    except Exception:
+        work_hours_title = "--h"
+
+    try:
+        day_key = now.strftime("%Y-%m-%d")
+        token_usage_by_day = storage.get_token_usage_by_date_range(now, now)
+        today_tokens = sum(token_usage_by_day.get(day_key, []))
+        token_title = format_token_count(today_tokens)
+    except Exception:
+        token_title = "--"
+
+    return f"{work_hours_title} · {token_title}"
+
+
 def _show_error_dialog(message):
     title = "WorkIntensity 权限错误"
     apple_script = f'display alert "{title.replace(chr(34), chr(92) + chr(34))}" message "{message.replace(chr(34), chr(92) + chr(34))}" as critical'
@@ -97,9 +115,9 @@ def main():
         def __init__(self):
             super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title="0.0h")
             self._set_status_bar_symbol_icon()
-            self._update_work_hours_title()
-            rumps.events.before_start.register(self._update_work_hours_title)
-            self._status_refresh_timer = rumps.Timer(self._update_work_hours_title, STATUS_REFRESH_SECONDS)
+            self._update_status_title()
+            rumps.events.before_start.register(self._update_status_title)
+            self._status_refresh_timer = rumps.Timer(self._update_status_title, STATUS_REFRESH_SECONDS)
             self._status_refresh_timer.start()
 
             self.recorder = record.InputRecorder()
@@ -142,12 +160,8 @@ def main():
                 self._icon_nsimage = image
                 return
 
-        def _update_work_hours_title(self, _=None):
-            try:
-                today_seconds = storage.get_activity_seconds_for_date(datetime.now())
-                title = f"{len(today_seconds) / 100:.1f}h"
-            except Exception:
-                title = "--h"
+        def _update_status_title(self, _=None):
+            title = _build_status_title(datetime.now(), storage, plot.format_token_count)
             self.title = title
             self._set_status_bar_title_font(title)
 

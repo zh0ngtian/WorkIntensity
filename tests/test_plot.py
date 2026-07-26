@@ -52,6 +52,7 @@ class PlotTokenDataTest(unittest.TestCase):
 
     def test_last_several_days_token_totals_match_hourly_arrays(self):
         old_get_token_usage = plot.storage.get_token_usage_by_date_range
+        old_get_project_usage = plot.storage.get_token_project_usage_by_date_range
         old_get_activity = plot.storage.get_activity_seconds_for_date
 
         def fake_get_token_usage(start_day, end_day):
@@ -62,11 +63,25 @@ class PlotTokenDataTest(unittest.TestCase):
                 current_day = current_day + timedelta(days=1)
             return usage
 
+        def fake_get_project_usage(start_day, end_day):
+            usage = {}
+            current_day = start_day
+            while current_day <= end_day:
+                usage[current_day.strftime("%Y-%m-%d")] = [
+                    {
+                        "project": "project-a",
+                        "tokens": current_day.day,
+                    }
+                ]
+                current_day = current_day + timedelta(days=1)
+            return usage
+
         try:
             plot.storage.get_token_usage_by_date_range = fake_get_token_usage
+            plot.storage.get_token_project_usage_by_date_range = fake_get_project_usage
             plot.storage.get_activity_seconds_for_date = lambda _day: []
 
-            _labels, _work_hours, _seconds_map, token_daily, token_map = plot.get_last_several_days_activities(3)
+            _labels, _work_hours, _seconds_map, token_daily, token_map, project_token_map = plot.get_last_several_days_activities(3)
 
             start_day = datetime.now().date() - timedelta(days=2)
             expected = []
@@ -74,10 +89,12 @@ class PlotTokenDataTest(unittest.TestCase):
                 day = start_day + timedelta(days=index)
                 day_key = day.strftime("%Y-%m-%d")
                 self.assertEqual(token_daily[index], sum(token_map[day_key]))
+                self.assertEqual(project_token_map[day_key][0]["tokens"], day.day)
                 expected.append(day.day * 24)
             self.assertEqual(token_daily, expected)
         finally:
             plot.storage.get_token_usage_by_date_range = old_get_token_usage
+            plot.storage.get_token_project_usage_by_date_range = old_get_project_usage
             plot.storage.get_activity_seconds_for_date = old_get_activity
 
     def test_trend_slice_uses_recorded_days_for_work_and_tokens(self):

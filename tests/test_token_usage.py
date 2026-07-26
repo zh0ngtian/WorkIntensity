@@ -35,6 +35,17 @@ def _token_count_line(timestamp, total_tokens, last_usage=None, total_usage=None
     )
 
 
+def _session_meta_line(cwd):
+    return json.dumps(
+        {
+            "type": "session_meta",
+            "payload": {
+                "cwd": cwd,
+            },
+        }
+    )
+
+
 def _detailed_token_count_line(timestamp, total_tokens, input_tokens, last_input_tokens):
     return _token_count_line(
         timestamp,
@@ -72,6 +83,7 @@ class TokenUsageAggregationTest(unittest.TestCase):
                 "\n".join(
                     [
                         "{not-json",
+                        _session_meta_line("/tmp/alpha-project"),
                         json.dumps({"type": "event_msg", "timestamp": "2026-05-16T00:00:00Z", "payload": {"type": "user_message"}}),
                         json.dumps({"type": "event_msg", "timestamp": "2026-05-16T00:00:00Z", "payload": {"type": "token_count", "info": None}}),
                         _token_count_line("2026-05-16T00:15:00Z", 100),
@@ -87,12 +99,15 @@ class TokenUsageAggregationTest(unittest.TestCase):
 
             result = token_usage.aggregate_hourly_token_usage([root])
             hourly_totals = result["hourly_totals"]
+            project_daily_totals = result["project_daily_totals"]
 
             self.assertEqual(hourly_totals[_bucket("2026-05-16T00:15:00Z")], 100)
             self.assertEqual(hourly_totals[_bucket("2026-05-16T01:20:00Z")], 150)
             self.assertEqual(hourly_totals[_bucket("2026-05-16T23:30:00Z")], 50)
             self.assertEqual(hourly_totals[_bucket("2026-05-17T00:30:00Z")], 20)
             self.assertEqual(sum(hourly_totals.values()), 320)
+            self.assertEqual(project_daily_totals[(_bucket("2026-05-16T00:15:00Z")[0], "alpha-project")], 250)
+            self.assertEqual(project_daily_totals[(_bucket("2026-05-17T00:30:00Z")[0], "alpha-project")], 70)
 
     def test_aggregate_hourly_usage_skips_invalid_utf8_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,6 +135,7 @@ class TokenUsageAggregationTest(unittest.TestCase):
             original.write_text(
                 "\n".join(
                     [
+                        _session_meta_line("/tmp/original-project"),
                         _detailed_token_count_line("2026-05-16T00:00:00Z", 100, 100, 100),
                         _detailed_token_count_line("2026-05-16T01:00:00Z", 250, 250, 150),
                     ]
@@ -132,6 +148,7 @@ class TokenUsageAggregationTest(unittest.TestCase):
             fork.write_text(
                 "\n".join(
                     [
+                        _session_meta_line("/tmp/fork-project"),
                         _detailed_token_count_line("2026-05-17T02:00:00Z", 100, 100, 100),
                         _detailed_token_count_line("2026-05-17T02:10:00Z", 250, 250, 150),
                         _detailed_token_count_line("2026-05-17T03:00:00Z", 400, 400, 150),
@@ -143,12 +160,15 @@ class TokenUsageAggregationTest(unittest.TestCase):
 
             result = token_usage.aggregate_hourly_token_usage([root])
             hourly_totals = result["hourly_totals"]
+            project_daily_totals = result["project_daily_totals"]
 
             self.assertEqual(hourly_totals[_bucket("2026-05-16T00:00:00Z")], 100)
             self.assertEqual(hourly_totals[_bucket("2026-05-16T01:00:00Z")], 150)
             self.assertEqual(hourly_totals[_bucket("2026-05-17T03:00:00Z")], 150)
             self.assertNotIn(_bucket("2026-05-17T02:00:00Z"), hourly_totals)
             self.assertEqual(sum(hourly_totals.values()), 400)
+            self.assertEqual(project_daily_totals[(_bucket("2026-05-16T00:00:00Z")[0], "original-project")], 250)
+            self.assertEqual(project_daily_totals[(_bucket("2026-05-17T03:00:00Z")[0], "fork-project")], 150)
 
     def test_codex_fork_dedupe_keeps_earliest_timestamp_when_replay_sorts_first(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -213,7 +233,10 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
     def _write_jsonl(self, totals):
         path = self.root / "session.jsonl"
         path.write_text(
-            "\n".join(_token_count_line(f"2026-05-16T0{index}:00:00Z", total) for index, total in enumerate(totals))
+            "\n".join(
+                [_session_meta_line("/tmp/cache-project")]
+                + [_token_count_line(f"2026-05-16T0{index}:00:00Z", total) for index, total in enumerate(totals)]
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -240,6 +263,21 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         rebuilt = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
         rebuilt_total = sum(next(iter(rebuilt.values())))
         self.assertEqual(rebuilt_total, 250)
+
+    def test_get_token_project_usage_by_date_range(self):
+        self._write_jsonl([100, 250])
+
+        usage = storage.get_token_project_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+
+        self.assertEqual(
+            usage["2026-05-16"],
+            [
+                {
+                    "project": "cache-project",
+                    "tokens": 250,
+                }
+            ],
+        )
 
     def test_icloud_backup_failure_does_not_raise(self):
         storage.get_connection()
