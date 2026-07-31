@@ -8,7 +8,7 @@ from datetime import datetime
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
 
-def _build_status_title(now, storage, format_token_count):
+def _build_status_title(now, storage, format_token_count, get_quota_status):
     try:
         today_seconds = storage.get_activity_seconds_for_date(now)
         work_hours_title = f"{len(today_seconds) / 100:.1f}h"
@@ -23,7 +23,12 @@ def _build_status_title(now, storage, format_token_count):
     except Exception:
         token_title = "--"
 
-    return f"{work_hours_title} · {token_title}"
+    try:
+        quota_title = get_quota_status(now)
+    except Exception:
+        quota_title = "--% · --"
+
+    return f"{work_hours_title} · {token_title} · {quota_title}"
 
 
 def _show_error_dialog(message):
@@ -104,6 +109,7 @@ def _detach_from_terminal_if_possible():
 def main():
     import rumps
 
+    import codex_quota
     import plot
     import record
     import storage
@@ -161,7 +167,12 @@ def main():
                 return
 
         def _update_status_title(self, _=None):
-            title = _build_status_title(datetime.now(), storage, plot.format_token_count)
+            title = _build_status_title(
+                datetime.now(),
+                storage,
+                plot.format_token_count,
+                codex_quota.fetch_quota_status,
+            )
             self.title = title
             self._set_status_bar_title_font(title)
 

@@ -1,6 +1,6 @@
 # Work Intensity Architecture
 
-WorkIntensity is a macOS status bar app that estimates local activity time and visualizes it with local Codex token usage. It has no remote service component.
+WorkIntensity is a macOS status bar app that estimates local activity time and visualizes it with local Codex token usage. It also reads Codex plan limits through the local Codex app-server process.
 
 ## Runtime Flow
 
@@ -8,7 +8,8 @@ WorkIntensity is a macOS status bar app that estimates local activity time and v
 2. `record.py` listens for mouse, keyboard, and meeting-detection activity.
 3. `storage.py` writes activity into SQLite as deduplicated 36-second blocks.
 4. `token_usage.py` scans local Codex JSONL files and aggregates token usage by local day/hour and local day/project.
-5. `plot.py` reads the cached activity/token data and renders `log/work_intensity.html` from `plot_template.html`.
+5. `codex_quota.py` asks `codex app-server` for the current Codex rate-limit bucket.
+6. `plot.py` reads the cached activity/token data and renders `log/work_intensity.html` from `plot_template.html`.
 
 ## Data Model
 
@@ -58,6 +59,12 @@ For each JSONL file, token events are `event_msg` entries whose payload has `typ
 Within each file, the value is cumulative. The aggregator counts the first total, then only positive deltas between consecutive totals. Duplicate totals are ignored. If the total drops, the new total starts a new sequence.
 
 Project attribution comes from `session_meta.payload.cwd` when present, falling back to `turn_context.payload.cwd` or `unknown`.
+
+## Codex Plan Limit Source
+
+Every status-title refresh starts `codex app-server`, completes its JSONL initialization handshake, and calls `account/rateLimits/read`. The app prefers the `codex` entry in `rateLimitsByLimitId` and falls back to the legacy `rateLimits` field. The menu bar displays `100 - usedPercent` and the `resetsAt` countdown as `<percent>% · <days>d<hours>h`.
+
+This remote plan-limit lookup is separate from token aggregation. No Codex auth token is read or stored by WorkIntensity.
 
 ## Visualization
 

@@ -46,11 +46,17 @@ python3 main.py
 
 token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite 数据库中，并通过本地 JSONL 文件清单指纹判断是否需要重建缓存。
 
+## Codex 套餐余量
+
+菜单栏通过官方 `codex app-server` 的 `account/rateLimits/read` 接口读取 Codex 主额度桶，显示剩余百分比和距离重置的时间，例如 `82% · 7d12h`。额度与工时、token 用量共用同一个 10 分钟刷新周期；查询失败时显示 `--% · --`。
+
+该功能要求本机已安装 `codex` 命令，并已使用 ChatGPT 账号登录 Codex。套餐余量读取不改变每日 token 用量的本地统计方式。
+
 ## 开发验证
 
 ```bash
 python3 -m unittest
-python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py']]"
+python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','codex_quota.py']]"
 ```
 
 更多数据流与表结构见 [`docs/architecture.md`](docs/architecture.md)。
