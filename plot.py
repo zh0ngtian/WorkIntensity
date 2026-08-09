@@ -1,6 +1,10 @@
 import os
 import json
+import math
+import threading
+import time
 from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import webbrowser
 
 import chinese_calendar
@@ -9,6 +13,92 @@ import storage
 
 
 TOKEN_AXIS_SEGMENT_COUNT = 5
+PLOT_SERVER_IDLE_TIMEOUT_SECONDS = 60 * 60
+PLOT_SERVER_CLOSE_DELAY_SECONDS = 2
+
+
+class _PlotRequestHandler(BaseHTTPRequestHandler):
+    def _send_empty(self, status):
+        self.send_response(status)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _read_strength(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return None
+        if content_length < 1 or content_length > 16:
+            return None
+        try:
+            return int(self.rfile.read(content_length).decode("ascii"))
+        except (UnicodeDecodeError, ValueError):
+            return None
+
+    def do_GET(self):
+        self.server.last_activity_at = time.monotonic()
+        if self.path == "/":
+            self.server.close_requested_at = None
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(self.server.html_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(self.server.html_bytes)
+            return
+        if self.path in ("/ping", "/favicon.ico"):
+            self._send_empty(204)
+            return
+        self._send_empty(404)
+
+    def do_POST(self):
+        self.server.last_activity_at = time.monotonic()
+        if self.path not in ("/settings/token-scale", "/close"):
+            self._send_empty(404)
+            return
+
+        strength = self._read_strength()
+        if strength is None:
+            self._send_empty(400)
+            return
+        storage.set_token_scale_strength(strength)
+        if self.path == "/close":
+            self.server.close_requested_at = time.monotonic()
+        self._send_empty(204)
+
+    def log_message(self, _format, *args):
+        pass
+
+
+def _stop_plot_server_when_inactive(server):
+    while True:
+        now = time.monotonic()
+        close_requested_at = server.close_requested_at
+        if (
+            close_requested_at is not None
+            and now - close_requested_at >= PLOT_SERVER_CLOSE_DELAY_SECONDS
+        ) or now - server.last_activity_at >= PLOT_SERVER_IDLE_TIMEOUT_SECONDS:
+            server.shutdown()
+            return
+        time.sleep(0.25)
+
+
+def serve_plot_html(html):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _PlotRequestHandler)
+    server.daemon_threads = True
+    server.html_bytes = html.encode("utf-8")
+    server.last_activity_at = time.monotonic()
+    server.close_requested_at = None
+    monitor = threading.Thread(target=_stop_plot_server_when_inactive, args=(server,), daemon=True)
+    monitor.start()
+    plot_url = f"http://127.0.0.1:{server.server_port}/"
+    if not webbrowser.open(plot_url):
+        server.server_close()
+        return
+    try:
+        server.serve_forever(poll_interval=0.25)
+    finally:
+        server.server_close()
 
 
 def _build_active_block_record(seconds_list, block_duration, period_count, blocks_per_period):
@@ -74,21 +164,16 @@ def build_token_axis_scale(values, segment_count=TOKEN_AXIS_SEGMENT_COUNT, compr
             "maxValue": max_value,
             "segmentCount": 1,
             "axisMax": 1,
-            "controlValues": [min_value],
             "compression": compression,
         }
 
     segment_count = max(1, int(segment_count))
-    control_values = sorted(set(raw_values))
-    rank_by_value = {
-        value: index / (len(control_values) - 1)
-        for index, value in enumerate(control_values)
-    }
     value_range = max_value - min_value
+    curvature = math.expm1(compression * math.log(1000))
     axis_values = []
     for value in raw_values:
         raw_ratio = (value - min_value) / value_range
-        mapped_ratio = (1 - compression) * raw_ratio + compression * rank_by_value[value]
+        mapped_ratio = math.log1p(curvature * raw_ratio) / math.log1p(curvature) if curvature > 0 else raw_ratio
         axis_values.append(round(mapped_ratio * segment_count, 6))
 
     return {
@@ -97,7 +182,6 @@ def build_token_axis_scale(values, segment_count=TOKEN_AXIS_SEGMENT_COUNT, compr
         "maxValue": max_value,
         "segmentCount": segment_count,
         "axisMax": segment_count,
-        "controlValues": control_values,
         "compression": compression,
     }
 
@@ -123,6 +207,7 @@ def get_last_several_days_activities(num_days):
     token_project_usage_by_day = storage.get_token_project_usage_by_date_range(
         start_of_last_several_days,
         end_of_last_several_days,
+        refresh=False,
     )
     last_several_days_date = []
     last_several_days_activities_daily = []
@@ -213,7 +298,11 @@ def plot_fig():
     trend_labels = last_several_days_data[-trend_days:]
     trend_values = slice_recent_trend_values(last_several_days_activities_daily, num_days, trend_days)
     trend_token_values = slice_recent_trend_values(last_several_days_tokens_daily, num_days, trend_days)
-    trend_token_axis_scale = build_token_axis_scale(trend_token_values)
+    token_scale_strength = storage.get_token_scale_strength()
+    trend_token_axis_scale = build_token_axis_scale(
+        trend_token_values,
+        compression=token_scale_strength / 100,
+    )
     trend_dates = [(today_date - timedelta(days=trend_days - 1 - i)).strftime("%Y-%m-%d") for i in range(trend_days)]
     trend_weekdays = [ylabels[(today_date - timedelta(days=trend_days - 1 - i)).weekday()] for i in range(trend_days)]
     trend_hourly_values = [calculate_hourly_percent(day_seconds_map.get(day_key, [])) for day_key in trend_dates]
@@ -278,7 +367,7 @@ def plot_fig():
     html_path = os.path.abspath(os.path.join("log", "work_intensity.html"))
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
-    webbrowser.open(f"file://{html_path}")
+    serve_plot_html(html)
 
 
 if __name__ == "__main__":

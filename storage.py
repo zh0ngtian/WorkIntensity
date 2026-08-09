@@ -22,6 +22,8 @@ _BLOCKS_PER_DAY = 24 * 100
 _ICLOUD_BACKUP_INTERVAL_SECONDS = 300
 _LAST_ICLOUD_BACKUP_AT = 0.0
 _TOKEN_USAGE_FINGERPRINT_KEY = "token_usage_fingerprint"
+_TOKEN_USAGE_TOTALS_CHECKSUM_KEY = "token_usage_totals_checksum"
+_TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
 
 
 def _ensure_log_dir():
@@ -112,6 +114,40 @@ def _ensure_tables(conn):
         ) WITHOUT ROWID
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_usage_file_state (
+            path TEXT NOT NULL PRIMARY KEY,
+            device INTEGER NOT NULL,
+            inode INTEGER NOT NULL,
+            processed_size INTEGER NOT NULL,
+            mtime_ns INTEGER NOT NULL,
+            previous_total INTEGER,
+            fallback_model TEXT NOT NULL,
+            project TEXT NOT NULL
+        ) WITHOUT ROWID
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS token_usage_dedup_event (
+            dedup_key TEXT NOT NULL PRIMARY KEY,
+            timestamp_us INTEGER NOT NULL,
+            day TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            delta INTEGER NOT NULL,
+            project TEXT NOT NULL
+        ) WITHOUT ROWID
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT NOT NULL PRIMARY KEY,
+            value TEXT NOT NULL
+        ) WITHOUT ROWID
+        """
+    )
 
 
 def _migrate_from_activity_events_if_needed(conn):
@@ -166,6 +202,37 @@ def get_connection():
             _restore_from_icloud_if_needed()
             _DB_CONN = _connect()
         return _DB_CONN
+
+
+def get_token_scale_strength(default=0):
+    conn = get_connection()
+    with _DB_LOCK:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (_TOKEN_SCALE_STRENGTH_SETTING_KEY,),
+        ).fetchone()
+    if row is None:
+        return default
+    try:
+        return max(0, min(100, int(row[0])))
+    except (TypeError, ValueError):
+        return default
+
+
+def set_token_scale_strength(value):
+    strength = max(0, min(100, int(value)))
+    conn = get_connection()
+    with _DB_LOCK:
+        conn.execute(
+            """
+            INSERT INTO app_settings(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (_TOKEN_SCALE_STRENGTH_SETTING_KEY, str(strength)),
+        )
+    sync_to_icloud()
+    return strength
 
 
 def record_activity(at_time=None):
@@ -243,11 +310,49 @@ def _get_token_usage_fingerprint(conn):
     return row[0] if row is not None else None
 
 
-def _replace_token_usage_cache(conn, fingerprint, hourly_totals, project_daily_totals):
+def _calculate_token_usage_totals_checksum(conn):
+    hourly_count, hourly_total = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0) FROM token_usage_hourly"
+    ).fetchone()
+    project_count, project_total = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0) FROM token_usage_project_daily"
+    ).fetchone()
+    return f"{hourly_count}:{hourly_total}:{project_count}:{project_total}"
+
+
+def _get_token_usage_totals_checksum(conn):
+    row = conn.execute(
+        "SELECT value FROM token_usage_cache_meta WHERE key = ?",
+        (_TOKEN_USAGE_TOTALS_CHECKSUM_KEY,),
+    ).fetchone()
+    return row[0] if row is not None else None
+
+
+def _store_token_usage_totals_checksum(conn):
+    conn.execute(
+        """
+        INSERT INTO token_usage_cache_meta(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (_TOKEN_USAGE_TOTALS_CHECKSUM_KEY, _calculate_token_usage_totals_checksum(conn)),
+    )
+
+
+def _replace_token_usage_cache(
+    conn,
+    fingerprint,
+    hourly_totals,
+    project_daily_totals,
+    deduped_events,
+    file_states,
+):
     try:
         conn.execute("BEGIN")
         conn.execute("DELETE FROM token_usage_hourly")
         conn.execute("DELETE FROM token_usage_project_daily")
+        conn.execute("DELETE FROM token_usage_dedup_event")
+        conn.execute("DELETE FROM token_usage_file_state")
         if hourly_totals:
             conn.executemany(
                 """
@@ -270,6 +375,40 @@ def _replace_token_usage_cache(conn, fingerprint, hourly_totals, project_daily_t
                     for (day, project), total_tokens in sorted(project_daily_totals.items())
                 ],
             )
+        if deduped_events:
+            conn.executemany(
+                """
+                INSERT INTO token_usage_dedup_event(
+                    dedup_key, timestamp_us, day, hour, delta, project
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (dedup_key, timestamp_us, day, hour, delta, project)
+                    for dedup_key, (timestamp_us, day, hour, delta, project) in deduped_events.items()
+                ],
+            )
+        if file_states:
+            conn.executemany(
+                """
+                INSERT INTO token_usage_file_state(
+                    path, device, inode, processed_size, mtime_ns,
+                    previous_total, fallback_model, project
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        path,
+                        state["device"],
+                        state["inode"],
+                        state["processed_size"],
+                        state["mtime_ns"],
+                        state["previous_total"],
+                        state["fallback_model"],
+                        state["project"],
+                    )
+                    for path, state in file_states.items()
+                ],
+            )
         conn.execute(
             """
             INSERT INTO token_usage_cache_meta(key, value)
@@ -278,10 +417,121 @@ def _replace_token_usage_cache(conn, fingerprint, hourly_totals, project_daily_t
             """,
             (_TOKEN_USAGE_FINGERPRINT_KEY, fingerprint),
         )
+        _store_token_usage_totals_checksum(conn)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
+
+
+def _load_token_usage_file_states(conn):
+    rows = conn.execute(
+        """
+        SELECT path, device, inode, processed_size, mtime_ns,
+               previous_total, fallback_model, project
+        FROM token_usage_file_state
+        """
+    ).fetchall()
+    return {
+        row[0]: {
+            "device": row[1],
+            "inode": row[2],
+            "processed_size": row[3],
+            "mtime_ns": row[4],
+            "previous_total": row[5],
+            "fallback_model": row[6],
+            "project": row[7],
+        }
+        for row in rows
+    }
+
+
+def _adjust_hourly_token_total(conn, day, hour, delta):
+    conn.execute(
+        """
+        INSERT INTO token_usage_hourly(day, hour, total_tokens)
+        VALUES (?, ?, ?)
+        ON CONFLICT(day, hour) DO UPDATE SET
+            total_tokens = token_usage_hourly.total_tokens + excluded.total_tokens
+        """,
+        (day, hour, delta),
+    )
+    conn.execute(
+        "DELETE FROM token_usage_hourly WHERE day = ? AND hour = ? AND total_tokens <= 0",
+        (day, hour),
+    )
+
+
+def _adjust_project_token_total(conn, day, project, delta):
+    conn.execute(
+        """
+        INSERT INTO token_usage_project_daily(day, project, total_tokens)
+        VALUES (?, ?, ?)
+        ON CONFLICT(day, project) DO UPDATE SET
+            total_tokens = token_usage_project_daily.total_tokens + excluded.total_tokens
+        """,
+        (day, project, delta),
+    )
+    conn.execute(
+        "DELETE FROM token_usage_project_daily WHERE day = ? AND project = ? AND total_tokens <= 0",
+        (day, project),
+    )
+
+
+def _apply_incremental_token_event(conn, event):
+    timestamp_us, day, hour, delta, dedup_key, project = event
+    if dedup_key is None:
+        _adjust_hourly_token_total(conn, day, hour, delta)
+        _adjust_project_token_total(conn, day, project, delta)
+        return
+
+    previous = conn.execute(
+        """
+        SELECT timestamp_us, day, hour, delta, project
+        FROM token_usage_dedup_event
+        WHERE dedup_key = ?
+        """,
+        (dedup_key,),
+    ).fetchone()
+    if previous is not None and not (
+        timestamp_us < previous[0] or (timestamp_us == previous[0] and delta > previous[3])
+    ):
+        return
+
+    if previous is not None:
+        _adjust_hourly_token_total(conn, previous[1], previous[2], -previous[3])
+        _adjust_project_token_total(conn, previous[1], previous[4], -previous[3])
+
+    _adjust_hourly_token_total(conn, day, hour, delta)
+    _adjust_project_token_total(conn, day, project, delta)
+    conn.execute(
+        """
+        INSERT INTO token_usage_dedup_event(
+            dedup_key, timestamp_us, day, hour, delta, project
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(dedup_key) DO UPDATE SET
+            timestamp_us = excluded.timestamp_us,
+            day = excluded.day,
+            hour = excluded.hour,
+            delta = excluded.delta,
+            project = excluded.project
+        """,
+        (dedup_key, timestamp_us, day, hour, delta, project),
+    )
+
+
+def _full_refresh_token_usage_cache(conn, roots):
+    aggregated = token_usage.aggregate_hourly_token_usage(roots)
+    with _DB_LOCK:
+        _ensure_tables(conn)
+        _replace_token_usage_cache(
+            conn,
+            aggregated["fingerprint"],
+            aggregated["hourly_totals"],
+            aggregated["project_daily_totals"],
+            aggregated["deduped_events"],
+            aggregated["file_states"],
+        )
 
 
 def refresh_token_usage_cache_if_needed(roots=None, force=False):
@@ -293,25 +543,170 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
         cached_fingerprint = _get_token_usage_fingerprint(conn)
         if not force and cached_fingerprint == fingerprint:
             return False
+        file_states = _load_token_usage_file_states(conn)
+        cached_totals_checksum = _get_token_usage_totals_checksum(conn)
+        totals_checksum_matches = cached_totals_checksum == _calculate_token_usage_totals_checksum(conn)
 
-    aggregated = token_usage.aggregate_hourly_token_usage(roots)
-    with _DB_LOCK:
-        _ensure_tables(conn)
-        _replace_token_usage_cache(
-            conn,
-            aggregated["fingerprint"],
-            aggregated["hourly_totals"],
-            aggregated["project_daily_totals"],
+    if force or not file_states or not totals_checksum_matches:
+        _full_refresh_token_usage_cache(conn, roots)
+        sync_to_icloud()
+        return True
+
+    current_files = []
+    for path, size, mtime_ns in file_records:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        current_files.append(
+            {
+                "path": path,
+                "size": size,
+                "mtime_ns": mtime_ns,
+                "device": stat.st_dev,
+                "inode": stat.st_ino,
+            }
         )
 
-    sync_to_icloud()
-    return True
+    states_by_identity = {
+        (state["device"], state["inode"]): (path, state)
+        for path, state in file_states.items()
+    }
+    states_by_basename = {}
+    for path, state in file_states.items():
+        states_by_basename.setdefault(os.path.basename(path), []).append((path, state))
+    current_paths = {current["path"] for current in current_files}
+    matched_state_paths = set()
+    updates = []
+    unsafe_change = False
+
+    for current in current_files:
+        old_path = current["path"]
+        state = file_states.get(current["path"])
+        if state is None:
+            identity_match = states_by_identity.get((current["device"], current["inode"]))
+            if identity_match is not None:
+                old_path, state = identity_match
+        if state is None:
+            basename_matches = states_by_basename.get(os.path.basename(current["path"]), [])
+            if len(basename_matches) == 1 and basename_matches[0][0] not in current_paths:
+                old_path, state = basename_matches[0]
+
+        if state is None:
+            scan = token_usage.scan_token_file(current["path"])
+        elif current["size"] == state["processed_size"] and (
+            current["mtime_ns"] == state["mtime_ns"] or old_path != current["path"]
+        ):
+            matched_state_paths.add(old_path)
+            if old_path != current["path"]:
+                updates.append((old_path, current, None, state))
+            continue
+        elif current["size"] > state["processed_size"]:
+            scan = token_usage.scan_token_file(
+                current["path"],
+                start_offset=state["processed_size"],
+                previous_total=state["previous_total"],
+                fallback_model=state["fallback_model"],
+                project=state["project"],
+            )
+        else:
+            unsafe_change = True
+            break
+
+        if not scan["ok"]:
+            return False
+        try:
+            stat = os.stat(current["path"])
+        except OSError:
+            return False
+        current.update(
+            {
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "device": stat.st_dev,
+                "inode": stat.st_ino,
+            }
+        )
+        matched_state_paths.add(old_path)
+        updates.append((old_path, current, scan, state))
+
+    if not unsafe_change and set(file_states) - matched_state_paths:
+        unsafe_change = True
+
+    if unsafe_change:
+        _full_refresh_token_usage_cache(conn, roots)
+        sync_to_icloud()
+        return True
+
+    try:
+        with _DB_LOCK:
+            conn.execute("BEGIN")
+            for old_path, current, scan, previous_state in updates:
+                if scan is None:
+                    next_state = previous_state
+                else:
+                    for event in scan["events"]:
+                        _apply_incremental_token_event(conn, event)
+                    next_state = {
+                        "previous_total": scan["previous_total"],
+                        "fallback_model": scan["fallback_model"],
+                        "project": scan["project"],
+                        "processed_size": scan["processed_size"],
+                    }
+
+                if old_path != current["path"]:
+                    conn.execute("DELETE FROM token_usage_file_state WHERE path = ?", (old_path,))
+                conn.execute(
+                    """
+                    INSERT INTO token_usage_file_state(
+                        path, device, inode, processed_size, mtime_ns,
+                        previous_total, fallback_model, project
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                        device = excluded.device,
+                        inode = excluded.inode,
+                        processed_size = excluded.processed_size,
+                        mtime_ns = excluded.mtime_ns,
+                        previous_total = excluded.previous_total,
+                        fallback_model = excluded.fallback_model,
+                        project = excluded.project
+                    """,
+                    (
+                        current["path"],
+                        current["device"],
+                        current["inode"],
+                        next_state["processed_size"],
+                        current["mtime_ns"],
+                        next_state["previous_total"],
+                        next_state["fallback_model"],
+                        next_state["project"],
+                    ),
+                )
+            conn.execute(
+                """
+                INSERT INTO token_usage_cache_meta(key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (_TOKEN_USAGE_FINGERPRINT_KEY, fingerprint),
+            )
+            _store_token_usage_totals_checksum(conn)
+            conn.execute("COMMIT")
+    except Exception:
+        with _DB_LOCK:
+            conn.execute("ROLLBACK")
+        raise
+
+    if updates:
+        sync_to_icloud()
+    return bool(updates)
 
 
-def get_token_usage_by_date_range(start_value, end_value, roots=None):
+def get_token_usage_by_date_range(start_value, end_value, roots=None, refresh=True):
     start_day = _date_to_day_key(start_value)
     end_day = _date_to_day_key(end_value)
-    refresh_token_usage_cache_if_needed(roots=roots)
+    if refresh:
+        refresh_token_usage_cache_if_needed(roots=roots)
 
     conn = get_connection()
     with _DB_LOCK:
@@ -338,10 +733,11 @@ def get_token_usage_by_date_range(start_value, end_value, roots=None):
     return usage_by_day
 
 
-def get_token_project_usage_by_date_range(start_value, end_value, roots=None):
+def get_token_project_usage_by_date_range(start_value, end_value, roots=None, refresh=True):
     start_day = _date_to_day_key(start_value)
     end_day = _date_to_day_key(end_value)
-    refresh_token_usage_cache_if_needed(roots=roots)
+    if refresh:
+        refresh_token_usage_cache_if_needed(roots=roots)
 
     conn = get_connection()
     with _DB_LOCK:

@@ -191,7 +191,6 @@ def main():
         def plot_button(self, _):
             p = multiprocessing.Process(target=plot.plot_fig)
             p.start()
-            p.join()
 
     app = WorkIntensityStatusBarApp()
     app.run()

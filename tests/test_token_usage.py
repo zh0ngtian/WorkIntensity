@@ -279,6 +279,123 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
             ],
         )
 
+    def test_token_scale_strength_is_persisted_and_clamped(self):
+        self.assertEqual(storage.get_token_scale_strength(), 0)
+        self.assertEqual(storage.set_token_scale_strength(73), 73)
+        storage._DB_CONN.close()
+        storage._DB_CONN = None
+        self.assertEqual(storage.get_token_scale_strength(), 73)
+        self.assertEqual(storage.set_token_scale_strength(999), 100)
+        self.assertEqual(storage.get_token_scale_strength(), 100)
+
+    def test_cache_reads_only_appended_jsonl_content(self):
+        path = self._write_jsonl([100])
+        storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+
+        original_aggregate = token_usage.aggregate_hourly_token_usage
+        token_usage.aggregate_hourly_token_usage = lambda _roots=None: self.fail("unexpected full rebuild")
+        try:
+            with path.open("a", encoding="utf-8") as file:
+                file.write(_token_count_line("2026-05-16T01:00:00Z", 250) + "\n")
+            usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+        finally:
+            token_usage.aggregate_hourly_token_usage = original_aggregate
+
+        self.assertEqual(sum(usage["2026-05-16"]), 250)
+
+    def test_incremental_new_fork_preserves_global_deduplication(self):
+        original = self.root / "original.jsonl"
+        original.write_text(
+            "\n".join(
+                [
+                    _session_meta_line("/tmp/original-project"),
+                    _detailed_token_count_line("2026-05-16T00:00:00Z", 100, 100, 100),
+                    _detailed_token_count_line("2026-05-16T01:00:00Z", 250, 250, 150),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        storage.get_token_usage_by_date_range("2026-05-16", "2026-05-17", roots=[self.root])
+
+        fork = self.root / "fork.jsonl"
+        fork.write_text(
+            "\n".join(
+                [
+                    _session_meta_line("/tmp/fork-project"),
+                    _detailed_token_count_line("2026-05-17T02:00:00Z", 100, 100, 100),
+                    _detailed_token_count_line("2026-05-17T02:10:00Z", 250, 250, 150),
+                    _detailed_token_count_line("2026-05-17T03:00:00Z", 400, 400, 150),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-17", roots=[self.root])
+
+        self.assertEqual(sum(sum(hours) for hours in usage.values()), 400)
+        self.assertEqual(usage[_bucket("2026-05-17T02:00:00Z")[0]][_bucket("2026-05-17T02:00:00Z")[1]], 0)
+        self.assertEqual(usage[_bucket("2026-05-17T03:00:00Z")[0]][_bucket("2026-05-17T03:00:00Z")[1]], 150)
+
+    def test_truncated_jsonl_falls_back_to_full_rebuild(self):
+        self._write_jsonl([100, 250])
+        storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+
+        original_aggregate = token_usage.aggregate_hourly_token_usage
+        aggregate_calls = []
+
+        def counted_aggregate(roots=None):
+            aggregate_calls.append(True)
+            return original_aggregate(roots)
+
+        token_usage.aggregate_hourly_token_usage = counted_aggregate
+        try:
+            self._write_jsonl([50])
+            usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+        finally:
+            token_usage.aggregate_hourly_token_usage = original_aggregate
+
+        self.assertEqual(sum(usage["2026-05-16"]), 50)
+        self.assertEqual(len(aggregate_calls), 1)
+
+    def test_incremental_reader_waits_for_complete_jsonl_line(self):
+        path = self._write_jsonl([100])
+        storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+        next_line = _token_count_line("2026-05-16T01:00:00Z", 250)
+        split_index = len(next_line) // 2
+
+        with path.open("a", encoding="utf-8") as file:
+            file.write(next_line[:split_index])
+        partial = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+
+        with path.open("a", encoding="utf-8") as file:
+            file.write(next_line[split_index:] + "\n")
+        complete = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+
+        self.assertEqual(sum(partial["2026-05-16"]), 100)
+        self.assertEqual(sum(complete["2026-05-16"]), 250)
+
+    def test_incremental_earlier_dedup_event_replaces_cached_replay(self):
+        replay = self.root / "replay.jsonl"
+        replay.write_text(
+            _detailed_token_count_line("2026-05-17T02:00:00Z", 100, 100, 100) + "\n",
+            encoding="utf-8",
+        )
+        storage.get_token_usage_by_date_range("2026-05-16", "2026-05-17", roots=[self.root])
+
+        original = self.root / "original.jsonl"
+        original.write_text(
+            _detailed_token_count_line("2026-05-16T02:00:00Z", 100, 100, 100) + "\n",
+            encoding="utf-8",
+        )
+        usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-17", roots=[self.root])
+
+        original_day, original_hour = _bucket("2026-05-16T02:00:00Z")
+        replay_day, replay_hour = _bucket("2026-05-17T02:00:00Z")
+        self.assertEqual(usage[original_day][original_hour], 100)
+        self.assertEqual(usage[replay_day][replay_hour], 0)
+
     def test_icloud_backup_failure_does_not_raise(self):
         storage.get_connection()
         icloud_root = Path(self.tmp.name) / "icloud"

@@ -41,17 +41,16 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(scale["compression"], 0)
         self.assertEqual(scale["values"], [0, 1, 2, 3, 4, 5])
 
-    def test_token_axis_scale_keeps_endpoints_fixed_and_spreads_middle_values(self):
-        linear = plot.build_token_axis_scale([10, 11, 12, 1000], compression=0)
-        compressed = plot.build_token_axis_scale([10, 11, 12, 1000], compression=1)
+    def test_token_axis_scale_keeps_endpoints_fixed_and_compresses_larger_values_more(self):
+        linear = plot.build_token_axis_scale([0, 25, 50, 75, 100], compression=0)
+        compressed = plot.build_token_axis_scale([0, 25, 50, 75, 100], compression=1)
 
         self.assertEqual(compressed["values"][0], linear["values"][0])
         self.assertEqual(compressed["values"][-1], linear["values"][-1])
         self.assertGreater(
-            compressed["values"][2] - compressed["values"][1],
-            linear["values"][2] - linear["values"][1],
+            compressed["values"][1] - compressed["values"][0],
+            compressed["values"][-1] - compressed["values"][-2],
         )
-        self.assertEqual(compressed["values"], [0, 1.666667, 3.333333, 5])
 
     def test_token_axis_scale_maps_equal_values_to_the_same_height(self):
         scale = plot.build_token_axis_scale([0, 10, 10, 1000], compression=1)
@@ -65,7 +64,6 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(scale["maxValue"], 0)
         self.assertEqual(scale["minValue"], 0)
         self.assertEqual(scale["axisMax"], 1)
-        self.assertEqual(scale["controlValues"], [0])
 
     def test_format_icloud_backup_time(self):
         self.assertEqual(plot.format_icloud_backup_time(None), "未备份")
@@ -75,6 +73,7 @@ class PlotTokenDataTest(unittest.TestCase):
         old_get_token_usage = plot.storage.get_token_usage_by_date_range
         old_get_project_usage = plot.storage.get_token_project_usage_by_date_range
         old_get_activity = plot.storage.get_activity_seconds_for_date
+        project_refresh_values = []
 
         def fake_get_token_usage(start_day, end_day):
             usage = {}
@@ -84,7 +83,8 @@ class PlotTokenDataTest(unittest.TestCase):
                 current_day = current_day + timedelta(days=1)
             return usage
 
-        def fake_get_project_usage(start_day, end_day):
+        def fake_get_project_usage(start_day, end_day, refresh=True):
+            project_refresh_values.append(refresh)
             usage = {}
             current_day = start_day
             while current_day <= end_day:
@@ -113,6 +113,7 @@ class PlotTokenDataTest(unittest.TestCase):
                 self.assertEqual(project_token_map[day_key][0]["tokens"], day.day)
                 expected.append(day.day * 24)
             self.assertEqual(token_daily, expected)
+            self.assertEqual(project_refresh_values, [False])
         finally:
             plot.storage.get_token_usage_by_date_range = old_get_token_usage
             plot.storage.get_token_project_usage_by_date_range = old_get_project_usage

@@ -80,7 +80,7 @@
     </div>
     <div class="panel">
       <div class="bottom">
-        <label class="token-scale-control" title="最小值和最大值保持不动，向右拖动可拉开中间值的距离">
+        <label class="token-scale-control" title="最小值和最大值保持不动，向右拖动可增强对数压缩">
           <span>Token 对比增强</span>
           <span>线性</span>
           <input id="token-scale-slider" type="range" min="0" max="100" step="1" />
@@ -226,49 +226,32 @@
       if (maxValue <= minValue) return formatTokenCount(minValue);
       const axisMax = Math.max(1, Number(scale.axisMax) || 1);
       const n = Math.max(0, Math.min(axisMax, Number(value) || 0));
-      const axisRatio = n / axisMax;
-      const rawValue = interpolateTokenControlPoints(axisRatio, 'mappedRatio', 'rawValue');
+      const mappedRatio = n / axisMax;
+      const curvature = tokenAxisCurvature();
+      const rawRatio = curvature > 0
+        ? Math.expm1(mappedRatio * Math.log1p(curvature)) / curvature
+        : mappedRatio;
+      const rawValue = minValue + rawRatio * (maxValue - minValue);
       return formatTokenCount(rawValue);
     }
 
-    function tokenAxisControlPoints() {
-      const scale = trendTokenAxisScale || {};
-      const minValue = Math.max(0, Number(scale.minValue) || 0);
-      const maxValue = Math.max(0, Number(scale.maxValue) || 0);
-      const compression = Math.max(0, Math.min(1, Number(scale.compression) || 0));
-      const controlValues = (scale.controlValues || []).map((value) => Math.max(0, Number(value) || 0));
-      if (maxValue <= minValue || controlValues.length <= 1) {
-        return [{rawValue: minValue, mappedRatio: 0}];
-      }
-      return controlValues.map((rawValue, index) => {
-        const rawRatio = (rawValue - minValue) / (maxValue - minValue);
-        const rankRatio = index / (controlValues.length - 1);
-        return {
-          rawValue,
-          mappedRatio: (1 - compression) * rawRatio + compression * rankRatio
-        };
-      });
-    }
-
-    function interpolateTokenControlPoints(value, inputKey, outputKey) {
-      const points = tokenAxisControlPoints();
-      if (points.length === 1 || value <= points[0][inputKey]) return points[0][outputKey];
-      for (let index = 1; index < points.length; index += 1) {
-        const start = points[index - 1];
-        const end = points[index];
-        if (value <= end[inputKey]) {
-          const span = end[inputKey] - start[inputKey];
-          const ratio = span > 0 ? (value - start[inputKey]) / span : 0;
-          return start[outputKey] + ratio * (end[outputKey] - start[outputKey]);
-        }
-      }
-      return points[points.length - 1][outputKey];
+    function tokenAxisCurvature() {
+      const compression = Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0));
+      return Math.expm1(compression * Math.log(1000));
     }
 
     function mapTokenAxisValue(value) {
+      const minValue = Math.max(0, Number(trendTokenAxisScale.minValue) || 0);
+      const maxValue = Math.max(0, Number(trendTokenAxisScale.maxValue) || 0);
       const axisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
       const rawValue = Math.max(0, Number(value) || 0);
-      return interpolateTokenControlPoints(rawValue, 'rawValue', 'mappedRatio') * axisMax;
+      if (maxValue <= minValue) return 0;
+      const rawRatio = Math.max(0, Math.min(1, (rawValue - minValue) / (maxValue - minValue)));
+      const curvature = tokenAxisCurvature();
+      const mappedRatio = curvature > 0
+        ? Math.log1p(curvature * rawRatio) / Math.log1p(curvature)
+        : rawRatio;
+      return mappedRatio * axisMax;
     }
 
     function dailySparklineSvg(activityValues, tokenValues, dateStr) {
@@ -507,6 +490,14 @@
 
     renderContribChart();
 
+    function saveTokenScaleStrength() {
+      fetch('/settings/token-scale', {
+        method: 'POST',
+        body: tokenScaleSlider.value,
+        keepalive: true
+      }).catch(() => {});
+    }
+
     const trendLabels = __TREND_LABELS_JSON__;
     const trendValues = __TREND_VALUES_JSON__;
     const trendTokenValues = __TREND_TOKEN_VALUES_JSON__;
@@ -514,7 +505,9 @@
     const trendHourlyTokenValues = __TREND_HOURLY_TOKEN_VALUES_JSON__;
     const trendProjectTokenValues = __TREND_PROJECT_TOKEN_VALUES_JSON__;
     const trendTokenAxisScale = __TREND_TOKEN_AXIS_SCALE_JSON__;
-    const trendTokenAxisValues = trendTokenAxisScale.values || trendTokenValues.map(() => 0);
+    const initialTokenScaleStrength = Math.round(
+      Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
+    );
     const trendDates = __TREND_DATES_JSON__;
     const trendWeekdays = __TREND_WEEKDAYS_JSON__;
     const trendSeriesData = trendValues.map((value, index) => ({
@@ -524,18 +517,15 @@
       projectTokens: trendProjectTokenValues[index] || []
     }));
     const trendTokenSeriesData = trendTokenValues.map((value, index) => ({
-      value: trendTokenAxisValues[index] || 0,
+      value: mapTokenAxisValue(value),
       rawValue: value,
       date: trendDates[index],
       weekday: trendWeekdays[index],
       projectTokens: trendProjectTokenValues[index] || []
     }));
     const trendTokenAxisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
-    const initialTokenScaleStrength = Math.round(
-      Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
-    );
     tokenScaleSlider.value = initialTokenScaleStrength;
-    tokenScaleSlider.disabled = (trendTokenAxisScale.controlValues || []).length <= 1;
+    tokenScaleSlider.disabled = trendTokenAxisScale.maxValue <= trendTokenAxisScale.minValue;
     tokenScaleValue.textContent = `${initialTokenScaleStrength}%`;
 
     barsChart.setOption({
@@ -666,6 +656,15 @@
         }]
       });
     });
+
+    tokenScaleSlider.addEventListener('change', saveTokenScaleStrength);
+    window.addEventListener('pagehide', (event) => {
+      const endpoint = event.persisted ? '/settings/token-scale' : '/close';
+      navigator.sendBeacon(endpoint, tokenScaleSlider.value);
+    });
+    window.setInterval(() => {
+      fetch('/ping', {cache: 'no-store'}).catch(() => {});
+    }, 5 * 60 * 1000);
 
     window.addEventListener('resize', () => {
       contribChart.resize();
