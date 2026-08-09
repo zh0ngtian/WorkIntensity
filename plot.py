@@ -62,39 +62,43 @@ def format_token_count(value):
     return str(value)
 
 
-def build_token_axis_scale(values, segment_count=TOKEN_AXIS_SEGMENT_COUNT):
+def build_token_axis_scale(values, segment_count=TOKEN_AXIS_SEGMENT_COUNT, compression=0):
     raw_values = [max(0, int(value or 0)) for value in values]
+    min_value = min(raw_values, default=0)
     max_value = max(raw_values, default=0)
-    if max_value <= 0:
+    compression = max(0, min(1, float(compression)))
+    if max_value <= min_value:
         return {
             "values": [0 for _value in raw_values],
-            "maxValue": 0,
+            "minValue": min_value,
+            "maxValue": max_value,
             "segmentCount": 1,
             "axisMax": 1,
+            "controlValues": [min_value],
+            "compression": compression,
         }
 
-    segment_count = max(1, min(int(segment_count), max_value))
-    segment_width = max_value / segment_count
-    axis_offsets = [0]
-    for index in range(segment_count):
-        axis_offsets.append(axis_offsets[-1] + segment_count - index)
-
+    segment_count = max(1, int(segment_count))
+    control_values = sorted(set(raw_values))
+    rank_by_value = {
+        value: index / (len(control_values) - 1)
+        for index, value in enumerate(control_values)
+    }
+    value_range = max_value - min_value
     axis_values = []
     for value in raw_values:
-        if value <= 0:
-            axis_values.append(0)
-            continue
-        segment_index = min(segment_count - 1, int(value / segment_width))
-        segment_start = segment_width * segment_index
-        segment_height = segment_count - segment_index
-        segment_ratio = (value - segment_start) / segment_width if segment_width else 0
-        axis_values.append(round(axis_offsets[segment_index] + segment_ratio * segment_height, 6))
+        raw_ratio = (value - min_value) / value_range
+        mapped_ratio = (1 - compression) * raw_ratio + compression * rank_by_value[value]
+        axis_values.append(round(mapped_ratio * segment_count, 6))
 
     return {
         "values": axis_values,
+        "minValue": min_value,
         "maxValue": max_value,
         "segmentCount": segment_count,
-        "axisMax": axis_offsets[-1],
+        "axisMax": segment_count,
+        "controlValues": control_values,
+        "compression": compression,
     }
 
 

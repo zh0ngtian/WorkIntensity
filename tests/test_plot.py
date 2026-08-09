@@ -31,20 +31,41 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(plot.format_token_count(1200), "1.2K")
         self.assertEqual(plot.format_token_count(2_500_000), "2.5M")
 
-    def test_token_axis_scale_uses_even_raw_segments_with_decreasing_axis_steps(self):
+    def test_token_axis_scale_stays_linear_when_values_are_comparable(self):
         scale = plot.build_token_axis_scale([0, 20, 40, 60, 80, 100])
 
         self.assertEqual(scale["maxValue"], 100)
+        self.assertEqual(scale["minValue"], 0)
         self.assertEqual(scale["segmentCount"], 5)
-        self.assertEqual(scale["axisMax"], 15)
-        self.assertEqual(scale["values"], [0, 5, 9, 12, 14, 15])
+        self.assertEqual(scale["axisMax"], 5)
+        self.assertEqual(scale["compression"], 0)
+        self.assertEqual(scale["values"], [0, 1, 2, 3, 4, 5])
+
+    def test_token_axis_scale_keeps_endpoints_fixed_and_spreads_middle_values(self):
+        linear = plot.build_token_axis_scale([10, 11, 12, 1000], compression=0)
+        compressed = plot.build_token_axis_scale([10, 11, 12, 1000], compression=1)
+
+        self.assertEqual(compressed["values"][0], linear["values"][0])
+        self.assertEqual(compressed["values"][-1], linear["values"][-1])
+        self.assertGreater(
+            compressed["values"][2] - compressed["values"][1],
+            linear["values"][2] - linear["values"][1],
+        )
+        self.assertEqual(compressed["values"], [0, 1.666667, 3.333333, 5])
+
+    def test_token_axis_scale_maps_equal_values_to_the_same_height(self):
+        scale = plot.build_token_axis_scale([0, 10, 10, 1000], compression=1)
+
+        self.assertEqual(scale["values"][1], scale["values"][2])
 
     def test_token_axis_scale_handles_all_zero_values(self):
         scale = plot.build_token_axis_scale([0, None, 0])
 
         self.assertEqual(scale["values"], [0, 0, 0])
         self.assertEqual(scale["maxValue"], 0)
+        self.assertEqual(scale["minValue"], 0)
         self.assertEqual(scale["axisMax"], 1)
+        self.assertEqual(scale["controlValues"], [0])
 
     def test_format_icloud_backup_time(self):
         self.assertEqual(plot.format_icloud_backup_time(None), "未备份")

@@ -10,7 +10,7 @@
     .panel { border: 1px solid rgba(226, 232, 240, 0.9); border-radius: 16px; padding: 14px; box-sizing: border-box; background: rgba(255, 255, 255, 0.9); box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06); backdrop-filter: blur(6px); }
     .subtitle { font-size: 12px; color: #6b7280; margin: 0; }
     .top { display: grid; grid-template-rows: auto 1fr auto; gap: 10px; height: 100%; }
-    .bottom { display: grid; grid-template-rows: 1fr; height: 100%; }
+    .bottom { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 4px; height: 100%; }
     .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .metrics { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .metric { min-width: 86px; padding: 8px 10px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); border: 1px solid rgba(199, 210, 254, 0.7); }
@@ -24,6 +24,9 @@
     .legend-scale { display: flex; align-items: center; gap: 6px; }
     .legend-note { color: #9ca3af; }
     .legend .box { width: 12px; height: 12px; border-radius: 4px; border: 1px solid rgba(27, 31, 35, 0.04); }
+    .token-scale-control { display: flex; align-items: center; gap: 8px; min-height: 22px; color: #6b7280; font-size: 12px; }
+    .token-scale-control input { width: 160px; accent-color: #db2777; }
+    .token-scale-control output { min-width: 32px; color: #9d174d; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -77,6 +80,13 @@
     </div>
     <div class="panel">
       <div class="bottom">
+        <label class="token-scale-control" title="最小值和最大值保持不动，向右拖动可拉开中间值的距离">
+          <span>Token 对比增强</span>
+          <span>线性</span>
+          <input id="token-scale-slider" type="range" min="0" max="100" step="1" />
+          <span>强</span>
+          <output id="token-scale-value"></output>
+        </label>
         <div id="bars"></div>
       </div>
     </div>
@@ -85,6 +95,8 @@
   <script>
     const contribEl = document.getElementById('contrib');
     const barsEl = document.getElementById('bars');
+    const tokenScaleSlider = document.getElementById('token-scale-slider');
+    const tokenScaleValue = document.getElementById('token-scale-value');
     const contribChart = echarts.init(contribEl);
     const barsChart = echarts.init(barsEl);
 
@@ -209,23 +221,54 @@
 
     function formatTokenAxisValue(value) {
       const scale = trendTokenAxisScale || {};
+      const minValue = Math.max(0, Number(scale.minValue) || 0);
       const maxValue = Math.max(0, Number(scale.maxValue) || 0);
-      const segmentCount = Math.max(1, Number(scale.segmentCount) || 1);
-      if (maxValue <= 0) return '0';
+      if (maxValue <= minValue) return formatTokenCount(minValue);
       const axisMax = Math.max(1, Number(scale.axisMax) || 1);
       const n = Math.max(0, Math.min(axisMax, Number(value) || 0));
-      const segmentWidth = maxValue / segmentCount;
-      let axisStart = 0;
-      for (let index = 0; index < segmentCount; index += 1) {
-        const segmentHeight = segmentCount - index;
-        const axisEnd = axisStart + segmentHeight;
-        if (n <= axisEnd || index === segmentCount - 1) {
-          const ratio = Math.max(0, Math.min(1, (n - axisStart) / segmentHeight));
-          return formatTokenCount(segmentWidth * (index + ratio));
-        }
-        axisStart = axisEnd;
+      const axisRatio = n / axisMax;
+      const rawValue = interpolateTokenControlPoints(axisRatio, 'mappedRatio', 'rawValue');
+      return formatTokenCount(rawValue);
+    }
+
+    function tokenAxisControlPoints() {
+      const scale = trendTokenAxisScale || {};
+      const minValue = Math.max(0, Number(scale.minValue) || 0);
+      const maxValue = Math.max(0, Number(scale.maxValue) || 0);
+      const compression = Math.max(0, Math.min(1, Number(scale.compression) || 0));
+      const controlValues = (scale.controlValues || []).map((value) => Math.max(0, Number(value) || 0));
+      if (maxValue <= minValue || controlValues.length <= 1) {
+        return [{rawValue: minValue, mappedRatio: 0}];
       }
-      return formatTokenCount(maxValue);
+      return controlValues.map((rawValue, index) => {
+        const rawRatio = (rawValue - minValue) / (maxValue - minValue);
+        const rankRatio = index / (controlValues.length - 1);
+        return {
+          rawValue,
+          mappedRatio: (1 - compression) * rawRatio + compression * rankRatio
+        };
+      });
+    }
+
+    function interpolateTokenControlPoints(value, inputKey, outputKey) {
+      const points = tokenAxisControlPoints();
+      if (points.length === 1 || value <= points[0][inputKey]) return points[0][outputKey];
+      for (let index = 1; index < points.length; index += 1) {
+        const start = points[index - 1];
+        const end = points[index];
+        if (value <= end[inputKey]) {
+          const span = end[inputKey] - start[inputKey];
+          const ratio = span > 0 ? (value - start[inputKey]) / span : 0;
+          return start[outputKey] + ratio * (end[outputKey] - start[outputKey]);
+        }
+      }
+      return points[points.length - 1][outputKey];
+    }
+
+    function mapTokenAxisValue(value) {
+      const axisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
+      const rawValue = Math.max(0, Number(value) || 0);
+      return interpolateTokenControlPoints(rawValue, 'rawValue', 'mappedRatio') * axisMax;
     }
 
     function dailySparklineSvg(activityValues, tokenValues, dateStr) {
@@ -488,6 +531,12 @@
       projectTokens: trendProjectTokenValues[index] || []
     }));
     const trendTokenAxisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
+    const initialTokenScaleStrength = Math.round(
+      Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
+    );
+    tokenScaleSlider.value = initialTokenScaleStrength;
+    tokenScaleSlider.disabled = (trendTokenAxisScale.controlValues || []).length <= 1;
+    tokenScaleValue.textContent = `${initialTokenScaleStrength}%`;
 
     barsChart.setOption({
       legend: {
@@ -542,6 +591,7 @@
           }
         },
         {
+          id: 'token-axis',
           type: 'value',
           min: 0,
           max: trendTokenAxisMax,
@@ -577,6 +627,7 @@
           ])
         }
       }, {
+        id: 'token-usage',
         name: 'Token 用量',
         type: 'line',
         yAxisIndex: 1,
@@ -592,6 +643,28 @@
           scale: true
         }
       }]
+    });
+
+    tokenScaleSlider.addEventListener('input', () => {
+      const strength = Math.max(0, Math.min(100, Number(tokenScaleSlider.value) || 0));
+      trendTokenAxisScale.compression = strength / 100;
+      tokenScaleValue.textContent = `${Math.round(strength)}%`;
+      trendTokenSeriesData.forEach((item) => {
+        item.value = mapTokenAxisValue(item.rawValue);
+      });
+      barsChart.setOption({
+        yAxis: [{
+          id: 'token-axis',
+          axisLabel: {
+            formatter: (value) => formatTokenAxisValue(value),
+            fontSize: 12
+          }
+        }],
+        series: [{
+          id: 'token-usage',
+          data: trendTokenSeriesData
+        }]
+      });
     });
 
     window.addEventListener('resize', () => {
