@@ -111,6 +111,56 @@ class CodexQuotaTest(unittest.TestCase):
         self.assertEqual(requests[1]["method"], "initialized")
         self.assertEqual(requests[2]["method"], "account/rateLimits/read")
 
+    def test_fetch_retries_transient_app_server_error(self):
+        now = datetime(2026, 7, 31, 10, 0)
+        resets_at = int(now.timestamp()) + 3600
+        failed_process = _FakeProcess(
+            b'{"id":1,"error":{"code":-32603,"message":"temporary failure"}}\n'
+        )
+        successful_process = _FakeProcess(
+            json.dumps(
+                {
+                    "id": 1,
+                    "result": {
+                        "rateLimits": {
+                            "primary": {"usedPercent": 18, "resetsAt": resets_at},
+                        }
+                    },
+                }
+            ).encode("utf-8")
+            + b"\n"
+        )
+
+        with (
+            mock.patch("codex_quota._find_codex_executable", return_value="/path/to/codex"),
+            mock.patch(
+                "codex_quota.subprocess.Popen",
+                side_effect=[failed_process, successful_process],
+            ) as popen,
+            mock.patch("codex_quota.time.sleep"),
+        ):
+            status = codex_quota.fetch_quota_status(now=now)
+
+        self.assertEqual(status, "82% · 0d1h")
+        self.assertEqual(popen.call_count, 2)
+
+    def test_fetch_uses_last_known_value_after_transient_errors(self):
+        now = datetime(2026, 7, 31, 10, 0)
+        resets_at = int(now.timestamp()) + 3600
+
+        with (
+            mock.patch.object(codex_quota, "_last_known_rate_limit", (82, resets_at)),
+            mock.patch(
+                "codex_quota._fetch_quota_status_once",
+                side_effect=RuntimeError("temporary failure"),
+            ) as fetch,
+            mock.patch("codex_quota.time.sleep"),
+        ):
+            status = codex_quota.fetch_quota_status(now=now)
+
+        self.assertEqual(status, "82% · 0d1h")
+        self.assertEqual(fetch.call_count, 5)
+
 
 if __name__ == "__main__":
     unittest.main()

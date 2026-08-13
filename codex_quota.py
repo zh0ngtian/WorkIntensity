@@ -11,6 +11,7 @@ from pathlib import Path
 _INITIALIZE_REQUEST_ID = 0
 _RATE_LIMITS_REQUEST_ID = 1
 _CHATGPT_CODEX_EXECUTABLE = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+_last_known_rate_limit = None
 
 
 def _find_codex_executable():
@@ -98,7 +99,7 @@ def _stop_process(process):
         process.wait()
 
 
-def fetch_quota_status(now=None, timeout_seconds=5):
+def _fetch_quota_status_once(now, timeout_seconds):
     process = subprocess.Popen(
         [_find_codex_executable(), "app-server"],
         stdin=subprocess.PIPE,
@@ -140,7 +141,36 @@ def fetch_quota_status(now=None, timeout_seconds=5):
                 if "error" in response:
                     raise RuntimeError("Codex app-server could not return rate limits")
 
-                remaining_percent, resets_at = _extract_primary_rate_limit(response.get("result", {}))
-                return format_quota_status(remaining_percent, resets_at, now or datetime.now())
+                return _extract_primary_rate_limit(response.get("result", {}))
     finally:
         _stop_process(process)
+
+
+def fetch_quota_status(now=None, timeout_seconds=5):
+    global _last_known_rate_limit
+
+    current_time = now or datetime.now()
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+
+    for attempt in range(5):
+        remaining_timeout = deadline - time.monotonic()
+        if remaining_timeout <= 0:
+            break
+        try:
+            _last_known_rate_limit = _fetch_quota_status_once(current_time, remaining_timeout)
+            return format_quota_status(*_last_known_rate_limit, current_time)
+        except RuntimeError as error:
+            last_error = error
+            if attempt == 4:
+                break
+            remaining_timeout = deadline - time.monotonic()
+            if remaining_timeout <= 0:
+                break
+            time.sleep(min(0.25, remaining_timeout))
+
+    if _last_known_rate_limit is not None:
+        return format_quota_status(*_last_known_rate_limit, current_time)
+    if last_error is not None:
+        raise last_error
+    raise TimeoutError("Timed out waiting for Codex rate limits")
