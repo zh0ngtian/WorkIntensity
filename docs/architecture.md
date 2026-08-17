@@ -62,7 +62,7 @@ Project attribution comes from `session_meta.payload.cwd` when present, falling 
 
 ## Codex Plan Limit Source
 
-Every status-title refresh starts `codex app-server`, completes its JSONL initialization handshake, and calls `account/rateLimits/read`. The app prefers the `codex` entry in `rateLimitsByLimitId` and falls back to the legacy `rateLimits` field. The menu bar displays `100 - usedPercent` and the `resetsAt` countdown as `<percent>% · <days>d<hours>h`.
+Every status-title refresh starts `codex app-server`, completes its JSONL initialization handshake, and calls `account/rateLimits/read`. The app prefers the `codex` entry in `rateLimitsByLimitId` and falls back to the legacy `rateLimits` field. The menu bar displays `100 - usedPercent`, the `resetsAt` countdown, and the countdown's remaining share of a seven-day window as `<percent>% · <days>d<hours>h(<time-percent>%)`.
 
 This remote plan-limit lookup is separate from token aggregation. No Codex auth token is read or stored by WorkIntensity.
 

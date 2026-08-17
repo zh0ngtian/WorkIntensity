@@ -11,6 +11,7 @@ from pathlib import Path
 _INITIALIZE_REQUEST_ID = 0
 _RATE_LIMITS_REQUEST_ID = 1
 _CHATGPT_CODEX_EXECUTABLE = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+_QUOTA_WINDOW_HOURS = 7 * 24
 _last_known_rate_limit = None
 
 
@@ -57,7 +58,9 @@ def format_quota_status(remaining_percent, resets_at, now):
     remaining_seconds = max(0, resets_at - int(now.timestamp()))
     remaining_hours = remaining_seconds // 3600
     days, hours = divmod(remaining_hours, 24)
-    return f"{remaining_percent}% · {days}d{hours}h"
+    remaining_time_percent = int(round(remaining_hours / _QUOTA_WINDOW_HOURS * 100))
+    remaining_time_percent = max(0, min(100, remaining_time_percent))
+    return f"{remaining_percent}% · {days}d{hours}h({remaining_time_percent}%)"
 
 
 def _request_payload():

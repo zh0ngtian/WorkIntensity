@@ -72,9 +72,15 @@ class CodexQuotaTest(unittest.TestCase):
 
     def test_formats_remaining_percentage_and_reset_countdown(self):
         now = datetime(2026, 7, 31, 10, 0)
+        resets_at = int(now.timestamp()) + (2 * 24 + 20) * 3600
+
+        self.assertEqual(codex_quota.format_quota_status(82, resets_at, now), "82% · 2d20h(40%)")
+
+    def test_reset_countdown_percentage_is_capped_at_one_hundred(self):
+        now = datetime(2026, 7, 31, 10, 0)
         resets_at = int(now.timestamp()) + (7 * 24 + 12) * 3600
 
-        self.assertEqual(codex_quota.format_quota_status(82, resets_at, now), "82% · 7d12h")
+        self.assertEqual(codex_quota.format_quota_status(82, resets_at, now), "82% · 7d12h(100%)")
 
     def test_fetch_uses_official_app_server_protocol(self):
         now = datetime(2026, 7, 31, 10, 0)
@@ -99,7 +105,7 @@ class CodexQuotaTest(unittest.TestCase):
         ):
             status = codex_quota.fetch_quota_status(now=now)
 
-        self.assertEqual(status, "82% · 7d12h")
+        self.assertEqual(status, "82% · 7d12h(100%)")
         popen.assert_called_once_with(
             ["/path/to/codex", "app-server"],
             stdin=codex_quota.subprocess.PIPE,
@@ -141,7 +147,7 @@ class CodexQuotaTest(unittest.TestCase):
         ):
             status = codex_quota.fetch_quota_status(now=now)
 
-        self.assertEqual(status, "82% · 0d1h")
+        self.assertEqual(status, "82% · 0d1h(1%)")
         self.assertEqual(popen.call_count, 2)
 
     def test_fetch_uses_last_known_value_after_transient_errors(self):
@@ -158,7 +164,7 @@ class CodexQuotaTest(unittest.TestCase):
         ):
             status = codex_quota.fetch_quota_status(now=now)
 
-        self.assertEqual(status, "82% · 0d1h")
+        self.assertEqual(status, "82% · 0d1h(1%)")
         self.assertEqual(fetch.call_count, 5)
 
 

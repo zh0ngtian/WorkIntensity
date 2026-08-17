@@ -48,7 +48,7 @@ token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite
 
 ## Codex 套餐余量
 
-菜单栏通过官方 `codex app-server` 的 `account/rateLimits/read` 接口读取 Codex 主额度桶，显示剩余百分比和距离重置的时间，例如 `82% · 7d12h`。额度与工时、token 用量共用同一个 10 分钟刷新周期；查询失败时显示 `--% · --`。
+菜单栏通过官方 `codex app-server` 的 `account/rateLimits/read` 接口读取 Codex 主额度桶，显示剩余额度百分比、距离重置的时间和按 7 天窗口计算的剩余时间百分比，例如 `82% · 2d20h(40%)`。额度与工时、token 用量共用同一个 10 分钟刷新周期；查询失败时显示 `--% · --`。
 
 该功能要求本机已安装 `codex` 命令，并已使用 ChatGPT 账号登录 Codex。套餐余量读取不改变每日 token 用量的本地统计方式。
 
