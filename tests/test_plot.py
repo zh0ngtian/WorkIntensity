@@ -26,6 +26,11 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(peak, 3000)
         self.assertEqual(today, 3000)
 
+    def test_recent_week_average_tokens_includes_zero_usage_days(self):
+        values = [999, 100, 0, 200, 300, 0, 400, 1200]
+
+        self.assertEqual(plot.calculate_recent_average_token_usage(values), 314)
+
     def test_format_token_count_uses_compact_units(self):
         self.assertEqual(plot.format_token_count(999), "999")
         self.assertEqual(plot.format_token_count(1200), "1.2K")

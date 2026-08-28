@@ -9,9 +9,11 @@ import token_usage
 
 
 _DB_LOCK = threading.Lock()
+_LOCAL_SETTINGS_LOCK = threading.Lock()
 _DB_CONN = None
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 _DB_PATH = os.path.join(_LOG_DIR, "work_intensity.sqlite3")
+_LOCAL_SETTINGS_DB_FILENAME = "local_settings.sqlite3"
 _ICLOUD_ROOT_DIR = os.path.join(os.path.expanduser("~"), "Library", "Mobile Documents", "com~apple~CloudDocs")
 _ICLOUD_BACKUP_DIR = os.path.join(_ICLOUD_ROOT_DIR, "WorkIntensity")
 _ICLOUD_DB_PATH = os.path.join(_ICLOUD_BACKUP_DIR, "work_intensity.sqlite3")
@@ -19,11 +21,13 @@ _LEGACY_TIMESTAMP_PATTERN = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _LEGACY_LOG_FILE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.log$")
 _BLOCK_DURATION_SECONDS = 36
 _BLOCKS_PER_DAY = 24 * 100
-_ICLOUD_BACKUP_INTERVAL_SECONDS = 300
+_ICLOUD_BACKUP_INTERVAL_SECONDS = 3600
 _LAST_ICLOUD_BACKUP_AT = 0.0
 _TOKEN_USAGE_FINGERPRINT_KEY = "token_usage_fingerprint"
 _TOKEN_USAGE_TOTALS_CHECKSUM_KEY = "token_usage_totals_checksum"
 _TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
+_TOKEN_RANGE_START_SETTING_KEY = "token_range_start"
+_TOKEN_RANGE_END_SETTING_KEY = "token_range_end"
 
 
 def _ensure_log_dir():
@@ -204,35 +208,94 @@ def get_connection():
         return _DB_CONN
 
 
+def _connect_local_settings():
+    _ensure_log_dir()
+    conn = sqlite3.connect(os.path.join(_LOG_DIR, _LOCAL_SETTINGS_DB_FILENAME), timeout=30)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS local_settings (
+            key TEXT NOT NULL PRIMARY KEY,
+            value TEXT NOT NULL
+        ) WITHOUT ROWID
+        """
+    )
+    return conn
+
+
+def _load_local_settings():
+    with _LOCAL_SETTINGS_LOCK:
+        conn = _connect_local_settings()
+        try:
+            return dict(conn.execute("SELECT key, value FROM local_settings").fetchall())
+        finally:
+            conn.close()
+
+
+def _store_local_settings(values):
+    with _LOCAL_SETTINGS_LOCK:
+        conn = _connect_local_settings()
+        try:
+            conn.executemany(
+                """
+                INSERT INTO local_settings(key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                [(key, str(value)) for key, value in values.items()],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def get_token_scale_strength(default=0):
-    conn = get_connection()
-    with _DB_LOCK:
-        row = conn.execute(
-            "SELECT value FROM app_settings WHERE key = ?",
-            (_TOKEN_SCALE_STRENGTH_SETTING_KEY,),
-        ).fetchone()
-    if row is None:
+    value = _load_local_settings().get(_TOKEN_SCALE_STRENGTH_SETTING_KEY)
+    if value is None:
         return default
     try:
-        return max(0, min(100, int(row[0])))
+        return max(0, min(100, int(value)))
     except (TypeError, ValueError):
         return default
 
 
 def set_token_scale_strength(value):
     strength = max(0, min(100, int(value)))
-    conn = get_connection()
-    with _DB_LOCK:
-        conn.execute(
-            """
-            INSERT INTO app_settings(key, value)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (_TOKEN_SCALE_STRENGTH_SETTING_KEY, str(strength)),
-        )
-    sync_to_icloud()
+    _store_local_settings({_TOKEN_SCALE_STRENGTH_SETTING_KEY: strength})
     return strength
+
+
+def _normalize_token_display_range(start, end):
+    start = max(0, min(100, int(start)))
+    end = max(0, min(100, int(end)))
+    if start >= end:
+        if start < 100:
+            end = start + 1
+        else:
+            start = 99
+            end = 100
+    return start, end
+
+
+def get_token_display_range(default=(0, 100)):
+    default_start, default_end = _normalize_token_display_range(*default)
+    settings = _load_local_settings()
+    try:
+        start = int(settings.get(_TOKEN_RANGE_START_SETTING_KEY, default_start))
+        end = int(settings.get(_TOKEN_RANGE_END_SETTING_KEY, default_end))
+    except (TypeError, ValueError):
+        return default_start, default_end
+    return _normalize_token_display_range(start, end)
+
+
+def set_token_display_range(start, end):
+    start, end = _normalize_token_display_range(start, end)
+    _store_local_settings(
+        {
+            _TOKEN_RANGE_START_SETTING_KEY: start,
+            _TOKEN_RANGE_END_SETTING_KEY: end,
+        }
+    )
+    return start, end
 
 
 def record_activity(at_time=None):

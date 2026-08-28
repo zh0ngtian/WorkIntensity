@@ -24,9 +24,21 @@
     .legend-scale { display: flex; align-items: center; gap: 6px; }
     .legend-note { color: #9ca3af; }
     .legend .box { width: 12px; height: 12px; border-radius: 4px; border: 1px solid rgba(27, 31, 35, 0.04); }
-    .token-scale-control { display: flex; align-items: center; gap: 8px; min-height: 22px; color: #6b7280; font-size: 12px; }
-    .token-scale-control input { width: 160px; accent-color: #db2777; }
+    .token-controls { display: flex; align-items: center; gap: 28px; min-height: 22px; flex-wrap: wrap; }
+    .token-scale-control, .token-range-control { display: flex; align-items: center; gap: 8px; min-height: 22px; color: #6b7280; font-size: 12px; }
+    .token-scale-control input { --scale-strength: 0%; width: 160px; height: 22px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; }
+    .token-scale-control input::-webkit-slider-runnable-track { height: 4px; border: 0; border-radius: 999px; background: linear-gradient(to right, #f9a8d4 0 var(--scale-strength), #e5e7eb var(--scale-strength) 100%); }
+    .token-scale-control input::-moz-range-track { height: 4px; border: 0; border-radius: 999px; background: linear-gradient(to right, #f9a8d4 0 var(--scale-strength), #e5e7eb var(--scale-strength) 100%); }
     .token-scale-control output { min-width: 32px; color: #9d174d; font-variant-numeric: tabular-nums; }
+    .token-range-control output { min-width: 82px; color: #9d174d; font-variant-numeric: tabular-nums; }
+    .dual-range { --range-start: 0%; --range-end: 100%; position: relative; width: 190px; height: 22px; }
+    .dual-range::before { content: ''; position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 999px; background: linear-gradient(to right, #e5e7eb 0 var(--range-start), #f9a8d4 var(--range-start) var(--range-end), #e5e7eb var(--range-end) 100%); }
+    .dual-range input { position: absolute; inset: 0; width: 100%; height: 22px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; pointer-events: none; }
+    .dual-range input::-webkit-slider-runnable-track { height: 4px; background: transparent; border: 0; }
+    .token-scale-control input::-webkit-slider-thumb, .dual-range input::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -7px; border: 1px solid #be185d; border-radius: 50%; appearance: none; -webkit-appearance: none; background: #db2777; cursor: ew-resize; pointer-events: auto; }
+    .dual-range input::-moz-range-track { height: 4px; background: transparent; border: 0; }
+    .token-scale-control input::-moz-range-thumb, .dual-range input::-moz-range-thumb { width: 18px; height: 18px; border: 1px solid #be185d; border-radius: 50%; background: #db2777; cursor: ew-resize; pointer-events: auto; }
+    .token-scale-control input:disabled, .dual-range.is-disabled { opacity: 0.45; }
   </style>
 </head>
 <body>
@@ -62,6 +74,10 @@
               <div class="metric-label">今日 Token</div>
               <div class="metric-value">__TODAY_TOKENS__</div>
             </div>
+            <div class="metric metric-token">
+              <div class="metric-label">最近一周平均 Token 用量</div>
+              <div class="metric-value">__RECENT_WEEK_AVERAGE_TOKENS__</div>
+            </div>
           </div>
         </div>
         <div id="contrib"></div>
@@ -80,13 +96,23 @@
     </div>
     <div class="panel">
       <div class="bottom">
-        <label class="token-scale-control" title="最小值和最大值保持不动，向右拖动可增强对数压缩">
-          <span>Token 对比增强</span>
-          <span>线性</span>
-          <input id="token-scale-slider" type="range" min="0" max="100" step="1" />
-          <span>强</span>
-          <output id="token-scale-value"></output>
-        </label>
+        <div class="token-controls">
+          <label class="token-scale-control" title="最小值和最大值保持不动，向右拖动可增强对数压缩">
+            <span>Token 对比增强</span>
+            <span>线性</span>
+            <input id="token-scale-slider" type="range" min="0" max="100" step="1" />
+            <span>强</span>
+            <output id="token-scale-value"></output>
+          </label>
+          <div class="token-range-control" title="拖动两个手柄可调整 Token 纵轴的显示范围">
+            <span>Token 显示区间</span>
+            <span class="dual-range" id="token-range-control">
+              <input id="token-range-min" type="range" min="0" max="100" step="1" value="0" aria-label="Token 显示下限" />
+              <input id="token-range-max" type="range" min="0" max="100" step="1" value="100" aria-label="Token 显示上限" />
+            </span>
+            <output id="token-range-value"></output>
+          </div>
+        </div>
         <div id="bars"></div>
       </div>
     </div>
@@ -97,6 +123,10 @@
     const barsEl = document.getElementById('bars');
     const tokenScaleSlider = document.getElementById('token-scale-slider');
     const tokenScaleValue = document.getElementById('token-scale-value');
+    const tokenRangeControl = document.getElementById('token-range-control');
+    const tokenRangeMin = document.getElementById('token-range-min');
+    const tokenRangeMax = document.getElementById('token-range-max');
+    const tokenRangeValue = document.getElementById('token-range-value');
     const contribChart = echarts.init(contribEl);
     const barsChart = echarts.init(barsEl);
 
@@ -498,6 +528,14 @@
       }).catch(() => {});
     }
 
+    function saveTokenDisplayRange() {
+      fetch('/settings/token-range', {
+        method: 'POST',
+        body: `${tokenRangeMin.value},${tokenRangeMax.value}`,
+        keepalive: true
+      }).catch(() => {});
+    }
+
     const trendLabels = __TREND_LABELS_JSON__;
     const trendValues = __TREND_VALUES_JSON__;
     const trendTokenValues = __TREND_TOKEN_VALUES_JSON__;
@@ -508,6 +546,8 @@
     const initialTokenScaleStrength = Math.round(
       Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
     );
+    const initialTokenRangeStart = __TOKEN_RANGE_START__;
+    const initialTokenRangeEnd = __TOKEN_RANGE_END__;
     const trendDates = __TREND_DATES_JSON__;
     const trendWeekdays = __TREND_WEEKDAYS_JSON__;
     const trendSeriesData = trendValues.map((value, index) => ({
@@ -525,7 +565,13 @@
     }));
     const trendTokenAxisMax = Math.max(1, Number(trendTokenAxisScale.axisMax) || 1);
     tokenScaleSlider.value = initialTokenScaleStrength;
+    tokenRangeMin.value = initialTokenRangeStart;
+    tokenRangeMax.value = initialTokenRangeEnd;
     tokenScaleSlider.disabled = trendTokenAxisScale.maxValue <= trendTokenAxisScale.minValue;
+    tokenRangeMin.disabled = trendTokenAxisScale.maxValue <= trendTokenAxisScale.minValue;
+    tokenRangeMax.disabled = trendTokenAxisScale.maxValue <= trendTokenAxisScale.minValue;
+    tokenRangeControl.classList.toggle('is-disabled', tokenRangeMin.disabled);
+    tokenScaleSlider.style.setProperty('--scale-strength', `${initialTokenScaleStrength}%`);
     tokenScaleValue.textContent = `${initialTokenScaleStrength}%`;
 
     barsChart.setOption({
@@ -635,9 +681,45 @@
       }]
     });
 
+    function updateTokenDisplayRange(changedInput) {
+      let start = Number(tokenRangeMin.value);
+      let end = Number(tokenRangeMax.value);
+      if (end - start < 1) {
+        if (changedInput === tokenRangeMin) {
+          start = Math.max(0, end - 1);
+        } else {
+          end = Math.min(100, start + 1);
+        }
+      }
+      tokenRangeMin.value = start;
+      tokenRangeMax.value = end;
+      tokenRangeMin.style.zIndex = start > 90 ? '5' : '3';
+      tokenRangeMax.style.zIndex = '4';
+      tokenRangeControl.style.setProperty('--range-start', `${start}%`);
+      tokenRangeControl.style.setProperty('--range-end', `${end}%`);
+
+      const axisMin = trendTokenAxisMax * start / 100;
+      const axisMax = trendTokenAxisMax * end / 100;
+      tokenRangeValue.textContent = `${formatTokenAxisValue(axisMin)} – ${formatTokenAxisValue(axisMax)}`;
+      barsChart.setOption({
+        yAxis: [{
+          id: 'token-axis',
+          min: axisMin,
+          max: axisMax
+        }]
+      });
+    }
+
+    updateTokenDisplayRange();
+    tokenRangeMin.addEventListener('input', () => updateTokenDisplayRange(tokenRangeMin));
+    tokenRangeMax.addEventListener('input', () => updateTokenDisplayRange(tokenRangeMax));
+    tokenRangeMin.addEventListener('change', saveTokenDisplayRange);
+    tokenRangeMax.addEventListener('change', saveTokenDisplayRange);
+
     tokenScaleSlider.addEventListener('input', () => {
       const strength = Math.max(0, Math.min(100, Number(tokenScaleSlider.value) || 0));
       trendTokenAxisScale.compression = strength / 100;
+      tokenScaleSlider.style.setProperty('--scale-strength', `${strength}%`);
       tokenScaleValue.textContent = `${Math.round(strength)}%`;
       trendTokenSeriesData.forEach((item) => {
         item.value = mapTokenAxisValue(item.rawValue);
@@ -655,11 +737,13 @@
           data: trendTokenSeriesData
         }]
       });
+      updateTokenDisplayRange();
     });
 
     tokenScaleSlider.addEventListener('change', saveTokenScaleStrength);
     window.addEventListener('pagehide', (event) => {
       const endpoint = event.persisted ? '/settings/token-scale' : '/close';
+      navigator.sendBeacon('/settings/token-range', `${tokenRangeMin.value},${tokenRangeMax.value}`);
       navigator.sendBeacon(endpoint, tokenScaleSlider.value);
     });
     window.setInterval(() => {

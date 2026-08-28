@@ -282,11 +282,27 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
     def test_token_scale_strength_is_persisted_and_clamped(self):
         self.assertEqual(storage.get_token_scale_strength(), 0)
         self.assertEqual(storage.set_token_scale_strength(73), 73)
-        storage._DB_CONN.close()
-        storage._DB_CONN = None
         self.assertEqual(storage.get_token_scale_strength(), 73)
         self.assertEqual(storage.set_token_scale_strength(999), 100)
         self.assertEqual(storage.get_token_scale_strength(), 100)
+        self.assertIsNone(storage._DB_CONN)
+
+    def test_token_display_range_is_persisted_and_clamped(self):
+        self.assertEqual(storage.get_token_display_range(), (0, 100))
+        self.assertEqual(storage.set_token_display_range(20, 85), (20, 85))
+        self.assertEqual(storage.get_token_display_range(), (20, 85))
+        self.assertEqual(storage.set_token_display_range(-5, 999), (0, 100))
+        self.assertEqual(storage.set_token_display_range(100, 20), (99, 100))
+        self.assertIsNone(storage._DB_CONN)
+
+    def test_slider_settings_do_not_trigger_icloud_sync(self):
+        original_sync = storage.sync_to_icloud
+        storage.sync_to_icloud = lambda *_args, **_kwargs: self.fail("unexpected iCloud sync")
+        try:
+            storage.set_token_scale_strength(50)
+            storage.set_token_display_range(10, 90)
+        finally:
+            storage.sync_to_icloud = original_sync
 
     def test_cache_reads_only_appended_jsonl_content(self):
         path = self._write_jsonl([100])

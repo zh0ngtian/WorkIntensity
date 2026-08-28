@@ -23,16 +23,32 @@ class _PlotRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-    def _read_strength(self):
+    def _read_ascii(self, max_length=16):
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             return None
-        if content_length < 1 or content_length > 16:
+        if content_length < 1 or content_length > max_length:
             return None
         try:
-            return int(self.rfile.read(content_length).decode("ascii"))
-        except (UnicodeDecodeError, ValueError):
+            return self.rfile.read(content_length).decode("ascii")
+        except UnicodeDecodeError:
+            return None
+
+    def _read_strength(self):
+        try:
+            return int(self._read_ascii())
+        except (TypeError, ValueError):
+            return None
+
+    def _read_token_range(self):
+        body = self._read_ascii(max_length=32)
+        if body is None:
+            return None
+        try:
+            start, end = body.split(",", 1)
+            return int(start), int(end)
+        except (TypeError, ValueError):
             return None
 
     def do_GET(self):
@@ -53,8 +69,17 @@ class _PlotRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.server.last_activity_at = time.monotonic()
-        if self.path not in ("/settings/token-scale", "/close"):
+        if self.path not in ("/settings/token-scale", "/settings/token-range", "/close"):
             self._send_empty(404)
+            return
+
+        if self.path == "/settings/token-range":
+            token_range = self._read_token_range()
+            if token_range is None:
+                self._send_empty(400)
+                return
+            storage.set_token_display_range(*token_range)
+            self._send_empty(204)
             return
 
         strength = self._read_strength()
@@ -139,6 +164,11 @@ def calculate_token_metric_values(displayed_dates, daily_token_values):
     peak_daily_tokens = max(recorded_token_values, default=0)
     today_tokens = int(daily_token_values[-1] or 0) if daily_token_values else 0
     return average_daily_tokens, peak_daily_tokens, today_tokens
+
+
+def calculate_recent_average_token_usage(daily_token_values, days=7):
+    recent_values = [int(value or 0) for value in daily_token_values[-days:]]
+    return int(round(sum(recent_values) / len(recent_values))) if recent_values else 0
 
 
 def format_token_count(value):
@@ -299,6 +329,7 @@ def plot_fig():
     trend_values = slice_recent_trend_values(last_several_days_activities_daily, num_days, trend_days)
     trend_token_values = slice_recent_trend_values(last_several_days_tokens_daily, num_days, trend_days)
     token_scale_strength = storage.get_token_scale_strength()
+    token_range_start, token_range_end = storage.get_token_display_range()
     trend_token_axis_scale = build_token_axis_scale(
         trend_token_values,
         compression=token_scale_strength / 100,
@@ -324,6 +355,7 @@ def plot_fig():
     today_work = round(last_several_days_activities_daily[num_days - 1], 1) if num_days > 0 else 0
     token_displayed_values = last_several_days_tokens_daily[:num_days]
     average_daily_tokens, peak_daily_tokens, today_tokens = calculate_token_metric_values(displayed_dates, token_displayed_values)
+    recent_week_average_tokens = calculate_recent_average_token_usage(token_displayed_values)
     current_local_date_str = today_date.strftime("%Y-%m-%d")
     current_local_hour = datetime.now().hour
     icloud_backup_time = storage.get_icloud_backup_time()
@@ -340,6 +372,7 @@ def plot_fig():
         "__AVERAGE_DAILY_TOKENS__": format_token_count(average_daily_tokens),
         "__PEAK_DAILY_TOKENS__": format_token_count(peak_daily_tokens),
         "__TODAY_TOKENS__": format_token_count(today_tokens),
+        "__RECENT_WEEK_AVERAGE_TOKENS__": format_token_count(recent_week_average_tokens),
         "__ICLOUD_BACKUP_TIME__": format_icloud_backup_time(icloud_backup_time),
         "__TREND_WEEKS__": str(trend_weeks),
         "__TREND_TOTAL__": str(trend_total),
@@ -356,6 +389,8 @@ def plot_fig():
         "__TREND_HOURLY_TOKEN_VALUES_JSON__": json.dumps(trend_hourly_token_values, ensure_ascii=False),
         "__TREND_PROJECT_TOKEN_VALUES_JSON__": json.dumps(trend_project_token_values, ensure_ascii=False),
         "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
+        "__TOKEN_RANGE_START__": str(token_range_start),
+        "__TOKEN_RANGE_END__": str(token_range_end),
         "__TREND_DATES_JSON__": json.dumps(trend_dates, ensure_ascii=False),
         "__TREND_WEEKDAYS_JSON__": json.dumps(trend_weekdays, ensure_ascii=False),
         "__TREND_Y_MAX__": str(trend_y_max),
