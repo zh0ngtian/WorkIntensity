@@ -79,8 +79,6 @@ The generated HTML has two main charts:
 - A 24-week heatmap of daily work hours. Hovering a day shows a combined hourly chart with activity percentage and token usage, plus a pie chart for that day's token share by project.
 - A 12-week daily trend chart with work hours on the left axis and token usage on the right axis. Hovering a day also shows that day's project token share.
 
-Heatmap cells show the estimated last activity time below work hours, with `⁺¹` for the next calendar day. Both chart tooltips show the full time and mark it as approximate. The value is the latest active block's start, formatted to minutes; it includes meeting detection, retains the existing 36-second resolution, and is absent for days with no activity. No additional activity data is stored.
-
 Hourly charts run from 05:00 through next-day 05:00, with next-day labels after midnight. Today's visible curve ends at the current reporting hour. A single local time snapshot determines each rendered plot's reporting date, week boundaries, and current hour.
 
 The HTML uses ECharts from jsDelivr, so chart rendering needs network access unless ECharts is vendored locally.

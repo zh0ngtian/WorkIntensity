@@ -144,16 +144,6 @@ def calculate_daily_work_hours(seconds_list):
     return round(sum(activities_per_hour), 1)
 
 
-def format_last_activity_time(seconds_list):
-    """Estimate the last activity time from the final 36-second block's start."""
-    if not seconds_list:
-        return None
-    seconds = max(seconds_list) + DAY_START_HOUR * 3600
-    minutes = (seconds % (24 * 3600)) // 60
-    prefix = "次日 " if seconds >= 24 * 3600 else ""
-    return f"{prefix}{minutes // 60:02d}:{minutes % 60:02d}"
-
-
 def calculate_hourly_percent(seconds_list):
     active_block_record = _build_active_block_record(seconds_list, block_duration=36, period_count=24, blocks_per_period=100)
     return [int(sum(x)) for x in active_block_record]
@@ -293,9 +283,6 @@ def plot_fig():
         day_token_map,
         day_project_token_map,
     ) = get_last_several_days_activities(num_days, today_date)
-    day_last_activity_map = {
-        day: format_last_activity_time(seconds) for day, seconds in day_seconds_map.items()
-    }
 
     for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
@@ -336,7 +323,6 @@ def plot_fig():
                     daily_tokens,
                     hourly_tokens,
                     project_tokens,
-                    day_last_activity_map.get(day_key),
                 ]
             )
 
@@ -356,7 +342,6 @@ def plot_fig():
     trend_hourly_values = [calculate_hourly_percent(day_seconds_map.get(day_key, [])) for day_key in trend_dates]
     trend_hourly_token_values = [day_token_map.get(day_key, [0 for _ in range(24)]) for day_key in trend_dates]
     trend_project_token_values = [day_project_token_map.get(day_key, []) for day_key in trend_dates]
-    trend_last_activity_values = [day_last_activity_map.get(day_key) for day_key in trend_dates]
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
@@ -407,7 +392,6 @@ def plot_fig():
         "__TREND_HOURLY_VALUES_JSON__": json.dumps(trend_hourly_values, ensure_ascii=False),
         "__TREND_HOURLY_TOKEN_VALUES_JSON__": json.dumps(trend_hourly_token_values, ensure_ascii=False),
         "__TREND_PROJECT_TOKEN_VALUES_JSON__": json.dumps(trend_project_token_values, ensure_ascii=False),
-        "__TREND_LAST_ACTIVITY_VALUES_JSON__": json.dumps(trend_last_activity_values, ensure_ascii=False),
         "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
         "__TOKEN_RANGE_START__": str(token_range_start),
         "__TOKEN_RANGE_END__": str(token_range_end),

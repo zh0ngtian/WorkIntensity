@@ -19,19 +19,6 @@ import plot
 
 
 class PlotTokenDataTest(unittest.TestCase):
-    def test_last_activity_time_uses_latest_block_in_the_reporting_day(self):
-        cases = [
-            ([], None),
-            ([0], "05:00"),
-            ([18 * 3600 + 59 * 60 + 24, 0], "23:59"),
-            ([19 * 3600, 18 * 3600], "次日 00:00"),
-            ([21 * 3600 + 30 * 60, 0], "次日 02:30"),
-            ([24 * 3600 - 36], "次日 04:59"),
-        ]
-        for seconds, expected in cases:
-            with self.subTest(seconds=seconds):
-                self.assertEqual(plot.format_last_activity_time(seconds), expected)
-
     def test_daily_token_usage_is_sum_of_hourly_values(self):
         self.assertEqual(plot.calculate_daily_token_usage([1, 2, 3] + [0 for _ in range(21)]), 6)
 
@@ -183,9 +170,6 @@ class PlotTokenDataTest(unittest.TestCase):
                 self.assertEqual(heatmap[-1][0:3], [23, expected_weekday, 1.0])
                 self.assertEqual(heatmap[-1][4], str(expected_day))
                 self.assertEqual(heatmap[-1][6:9], [14400, [600] * 24, [{"project": "sample", "tokens": 14400}]])
-                self.assertEqual(heatmap[-1][9], "05:59")
-                last_activity = json.loads(re.search(r"const trendLastActivityValues = (.+);", html).group(1))
-                self.assertEqual(last_activity, ["05:59"] * 84)
                 serve.assert_called_once_with(html)
 
 
