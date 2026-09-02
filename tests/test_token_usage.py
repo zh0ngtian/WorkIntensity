@@ -3,8 +3,9 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import storage
 import token_usage
@@ -69,11 +70,41 @@ def _detailed_token_count_line(timestamp, total_tokens, input_tokens, last_input
 
 
 def _bucket(timestamp):
-    local_time = datetime.fromisoformat(timestamp[:-1] + "+00:00").astimezone()
+    local_time = datetime.fromisoformat(timestamp[:-1] + "+00:00").astimezone() - timedelta(hours=5)
     return local_time.strftime("%Y-%m-%d"), local_time.hour
 
 
 class TokenUsageAggregationTest(unittest.TestCase):
+    def test_utc_events_use_local_five_am_boundary_and_keep_real_timestamps(self):
+        local_times = [
+            datetime(2026, 5, 31, 5),
+            datetime(2026, 6, 1, 0),
+            datetime(2026, 6, 1, 4, 59, 59),
+            datetime(2026, 6, 1, 5),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.jsonl"
+            lines = [_session_meta_line("/tmp/boundary-project")]
+            for index, local_time in enumerate(local_times, start=1):
+                utc_time = local_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+                lines.append(_detailed_token_count_line(utc_time, index * 100, index * 100, 100))
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = token_usage.aggregate_hourly_token_usage([Path(tmp)])
+
+        self.assertEqual(result["hourly_totals"], {
+            ("2026-05-31", 0): 100, ("2026-05-31", 19): 100,
+            ("2026-05-31", 23): 100, ("2026-06-01", 0): 100,
+        })
+        self.assertEqual(result["project_daily_totals"], {
+            ("2026-05-31", "boundary-project"): 300,
+            ("2026-06-01", "boundary-project"): 100,
+        })
+        self.assertEqual(
+            sorted(event[0] for event in result["deduped_events"].values()),
+            [int(local_time.timestamp() * 1_000_000) for local_time in local_times],
+        )
+
     def test_aggregate_hourly_usage_from_codex_jsonl(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -278,6 +309,64 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_old_cache_is_rebuilt_once_even_when_files_are_unchanged(self):
+        path = self.root / "session.jsonl"
+        path.write_text(
+            _session_meta_line("/tmp/boundary-project") + "\n"
+            + _detailed_token_count_line("2026-01-01T04:59:59", 100, 100, 100) + "\n"
+            + _detailed_token_count_line("2026-01-01T05:00:00", 250, 250, 150) + "\n",
+            encoding="utf-8",
+        )
+        conn = storage.get_connection()
+        # Build the old midnight cache, including valid incremental file states.
+        with patch.object(token_usage, "reporting_date", lambda value: value.date()), patch.object(
+            token_usage, "reporting_hour", lambda value: value.hour
+        ):
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        original_states = storage._load_token_usage_file_states(conn)
+
+        for old_version in (None, "token_usage_v4_incremental"):
+            with self.subTest(old_version=old_version):
+                conn.execute("DELETE FROM token_usage_cache_meta WHERE key = ?", (storage._TOKEN_USAGE_VERSION_KEY,))
+                if old_version is not None:
+                    conn.execute("INSERT INTO token_usage_cache_meta VALUES (?, ?)", (storage._TOKEN_USAGE_VERSION_KEY, old_version))
+                with patch.object(token_usage, "aggregate_hourly_token_usage", wraps=token_usage.aggregate_hourly_token_usage) as aggregate:
+                    usage = storage.get_token_usage_by_date_range("2025-12-31", "2026-01-01", roots=[self.root])
+                    self.assertFalse(storage.refresh_token_usage_cache_if_needed(roots=[self.root]))
+                    aggregate.assert_called_once_with([self.root])
+                self.assertEqual(usage["2025-12-31"], [0] * 23 + [100])
+                self.assertEqual(usage["2026-01-01"], [150] + [0] * 23)
+                projects = storage.get_token_project_usage_by_date_range("2025-12-31", "2026-01-01", refresh=False)
+                self.assertEqual(projects, {
+                    "2025-12-31": [{"project": "boundary-project", "tokens": 100}],
+                    "2026-01-01": [{"project": "boundary-project", "tokens": 150}],
+                })
+                self.assertEqual(storage._load_token_usage_file_states(conn), original_states)
+                self.assertEqual(conn.execute(
+                    "SELECT day, hour, delta FROM token_usage_dedup_event ORDER BY timestamp_us"
+                ).fetchall(), [("2025-12-31", 23, 100), ("2026-01-01", 0, 150)])
+
+    def test_incremental_events_cross_five_am_without_rebuilding_or_double_counting(self):
+        path = self.root / "session.jsonl"
+        path.write_text(
+            _session_meta_line("/tmp/boundary-project") + "\n"
+            + _detailed_token_count_line("2026-01-01T04:59:59", 100, 100, 100) + "\n",
+            encoding="utf-8",
+        )
+        before = datetime(2026, 1, 1, 4, 59, 59)
+        initial = storage.get_token_usage_by_date_range(before, before, roots=[self.root])
+        self.assertEqual(initial, {"2025-12-31": [0] * 23 + [100]})
+        with path.open("a", encoding="utf-8") as file:
+            file.write(_detailed_token_count_line("2026-01-01T05:00:00", 250, 250, 150) + "\n")
+            file.write(_detailed_token_count_line("2026-01-01T05:01:00", 250, 250, 150) + "\n")
+        with patch.object(token_usage, "aggregate_hourly_token_usage", side_effect=AssertionError("unexpected full rebuild")):
+            usage = storage.get_token_usage_by_date_range("2025-12-31", "2026-01-01", roots=[self.root])
+        self.assertEqual(usage["2025-12-31"], [0] * 23 + [100])
+        self.assertEqual(usage["2026-01-01"], [150] + [0] * 23)
+        self.assertEqual(storage.get_token_project_usage_by_date_range(before, before, refresh=False), {
+            "2025-12-31": [{"project": "boundary-project", "tokens": 100}],
+        })
 
     def test_token_scale_strength_is_persisted_and_clamped(self):
         self.assertEqual(storage.get_token_scale_strength(), 0)

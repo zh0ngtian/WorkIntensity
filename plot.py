@@ -10,6 +10,7 @@ import webbrowser
 import chinese_calendar
 
 import storage
+from day_boundary import DAY_START_HOUR, reporting_date, reporting_hour
 
 
 TOKEN_AXIS_SEGMENT_COUNT = 5
@@ -129,9 +130,9 @@ def serve_plot_html(html):
 def _build_active_block_record(seconds_list, block_duration, period_count, blocks_per_period):
     active_block_record = [[0 for _ in range(blocks_per_period)] for _ in range(period_count)]
     seconds_per_period = block_duration * blocks_per_period
-    for seconds_since_midnight in seconds_list:
-        period_index = seconds_since_midnight // seconds_per_period
-        block_index = (seconds_since_midnight % seconds_per_period) // block_duration
+    for seconds_since_day_start in seconds_list:
+        period_index = seconds_since_day_start // seconds_per_period
+        block_index = (seconds_since_day_start % seconds_per_period) // block_duration
         if 0 <= period_index < period_count and 0 <= block_index < blocks_per_period:
             active_block_record[period_index][block_index] = 1
     return active_block_record
@@ -141,6 +142,16 @@ def calculate_daily_work_hours(seconds_list):
     active_block_record = _build_active_block_record(seconds_list, block_duration=36, period_count=24, blocks_per_period=100)
     activities_per_hour = [sum(x) / 100.0 for x in active_block_record]
     return round(sum(activities_per_hour), 1)
+
+
+def format_last_activity_time(seconds_list):
+    """Estimate the last activity time from the final 36-second block's start."""
+    if not seconds_list:
+        return None
+    seconds = max(seconds_list) + DAY_START_HOUR * 3600
+    minutes = (seconds % (24 * 3600)) // 60
+    prefix = "次日 " if seconds >= 24 * 3600 else ""
+    return f"{prefix}{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 def calculate_hourly_percent(seconds_list):
@@ -230,8 +241,9 @@ def is_china_workday(day_value):
     return chinese_calendar.is_workday(day_value)
 
 
-def get_last_several_days_activities(num_days):
-    start_of_last_several_days = datetime.now().date() - timedelta(days=num_days - 1)
+def get_last_several_days_activities(num_days, today_date=None):
+    today_date = today_date or reporting_date(datetime.now())
+    start_of_last_several_days = today_date - timedelta(days=num_days - 1)
     end_of_last_several_days = start_of_last_several_days + timedelta(days=num_days - 1)
     token_usage_by_day = storage.get_token_usage_by_date_range(start_of_last_several_days, end_of_last_several_days)
     token_project_usage_by_day = storage.get_token_project_usage_by_date_range(
@@ -269,9 +281,10 @@ def get_last_several_days_activities(num_days):
 
 def plot_fig():
     week_number = 24
-    today_date = datetime.today().date()
+    now = datetime.now()
+    today_date = reporting_date(now)
 
-    num_days = (week_number - 1) * 7 + datetime.today().weekday() + 1
+    num_days = (week_number - 1) * 7 + today_date.weekday() + 1
     (
         last_several_days_data,
         last_several_days_activities_daily,
@@ -279,13 +292,16 @@ def plot_fig():
         last_several_days_tokens_daily,
         day_token_map,
         day_project_token_map,
-    ) = get_last_several_days_activities(num_days)
+    ) = get_last_several_days_activities(num_days, today_date)
+    day_last_activity_map = {
+        day: format_last_activity_time(seconds) for day, seconds in day_seconds_map.items()
+    }
 
     for i in range(num_days, week_number * 7):
         last_several_days_activities_daily.append(-1)
         last_several_days_tokens_daily.append(0)
 
-    start_date = datetime.now().date() - timedelta(days=num_days - 1)
+    start_date = today_date - timedelta(days=num_days - 1)
     displayed_dates = [start_date + timedelta(days=i) for i in range(num_days)]
     xlabels = []
     for i in range(week_number - 1):
@@ -293,7 +309,7 @@ def plot_fig():
         end_label = last_several_days_data[i * 7 + 6]
         xlabels.append(f"{start_label} - {end_label}")
     xlabels.append(
-        f'{last_several_days_data[(week_number - 1) * 7]} - {(datetime.today() + timedelta(7 - datetime.today().weekday() - 1)).strftime("%m-%d")}'
+        f'{last_several_days_data[(week_number - 1) * 7]} - {(today_date + timedelta(days=6 - today_date.weekday())).strftime("%m-%d")}'
     )
 
     ylabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -320,6 +336,7 @@ def plot_fig():
                     daily_tokens,
                     hourly_tokens,
                     project_tokens,
+                    day_last_activity_map.get(day_key),
                 ]
             )
 
@@ -339,6 +356,7 @@ def plot_fig():
     trend_hourly_values = [calculate_hourly_percent(day_seconds_map.get(day_key, [])) for day_key in trend_dates]
     trend_hourly_token_values = [day_token_map.get(day_key, [0 for _ in range(24)]) for day_key in trend_dates]
     trend_project_token_values = [day_project_token_map.get(day_key, []) for day_key in trend_dates]
+    trend_last_activity_values = [day_last_activity_map.get(day_key) for day_key in trend_dates]
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
@@ -356,8 +374,8 @@ def plot_fig():
     token_displayed_values = last_several_days_tokens_daily[:num_days]
     average_daily_tokens, peak_daily_tokens, today_tokens = calculate_token_metric_values(displayed_dates, token_displayed_values)
     recent_week_average_tokens = calculate_recent_average_token_usage(token_displayed_values)
-    current_local_date_str = today_date.strftime("%Y-%m-%d")
-    current_local_hour = datetime.now().hour
+    current_reporting_date_str = today_date.strftime("%Y-%m-%d")
+    current_reporting_hour = reporting_hour(now)
     icloud_backup_time = storage.get_icloud_backup_time()
 
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plot_template.html")
@@ -379,8 +397,9 @@ def plot_fig():
         "__WEEK_RANGES_JSON__": json.dumps(xlabels, ensure_ascii=False),
         "__YLABELS_JSON__": json.dumps(ylabels, ensure_ascii=False),
         "__START_DATE_STR_JSON__": json.dumps(start_date.strftime("%Y-%m-%d"), ensure_ascii=False),
-        "__CURRENT_LOCAL_DATE_STR_JSON__": json.dumps(current_local_date_str, ensure_ascii=False),
-        "__CURRENT_LOCAL_HOUR__": str(current_local_hour),
+        "__CURRENT_REPORTING_DATE_STR_JSON__": json.dumps(current_reporting_date_str, ensure_ascii=False),
+        "__CURRENT_REPORTING_HOUR__": str(current_reporting_hour),
+        "__DAY_START_HOUR__": str(DAY_START_HOUR),
         "__HEATMAP_DATA_JSON__": json.dumps(heatmap_data, ensure_ascii=False),
         "__TREND_LABELS_JSON__": json.dumps(trend_labels, ensure_ascii=False),
         "__TREND_VALUES_JSON__": json.dumps(trend_values, ensure_ascii=False),
@@ -388,6 +407,7 @@ def plot_fig():
         "__TREND_HOURLY_VALUES_JSON__": json.dumps(trend_hourly_values, ensure_ascii=False),
         "__TREND_HOURLY_TOKEN_VALUES_JSON__": json.dumps(trend_hourly_token_values, ensure_ascii=False),
         "__TREND_PROJECT_TOKEN_VALUES_JSON__": json.dumps(trend_project_token_values, ensure_ascii=False),
+        "__TREND_LAST_ACTIVITY_VALUES_JSON__": json.dumps(trend_last_activity_values, ensure_ascii=False),
         "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
         "__TOKEN_RANGE_START__": str(token_range_start),
         "__TOKEN_RANGE_END__": str(token_range_end),

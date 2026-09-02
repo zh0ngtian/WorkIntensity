@@ -18,7 +18,8 @@
     .metric-token .metric-value { color: #9d174d; }
     .metric-label { font-size: 11px; color: #6b7280; margin-bottom: 4px; }
     .metric-value { font-size: 16px; font-weight: 700; color: #111827; }
-    #contrib { width: 100%; height: 100%; }
+    .contrib-scroll { min-width: 0; min-height: 0; overflow: auto; }
+    #contrib { width: 100%; height: 100%; min-width: 1138px; min-height: 284px; }
     #bars { width: 100%; height: 100%; }
     .legend { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #6b7280; font-size: 12px; }
     .legend-scale { display: flex; align-items: center; gap: 6px; }
@@ -80,7 +81,7 @@
             </div>
           </div>
         </div>
-        <div id="contrib"></div>
+        <div class="contrib-scroll"><div id="contrib"></div></div>
         <div class="legend">
           <div class="legend-scale">
             <span>少</span>
@@ -91,6 +92,7 @@
             <span class="box" style="background:#1f7a4d"></span>
             <span>多</span>
           </div>
+          <span class="legend-note">工时下方为最晚操作时间（约）；⁺¹ 表示次日</span>
         </div>
       </div>
     </div>
@@ -134,8 +136,9 @@
     const ylabels = __YLABELS_JSON__;
     const startDateStr = __START_DATE_STR_JSON__;
     const startDate = new Date(startDateStr + 'T00:00:00');
-    const currentLocalDateStr = __CURRENT_LOCAL_DATE_STR_JSON__;
-    const currentLocalHour = __CURRENT_LOCAL_HOUR__;
+    const currentReportingDateStr = __CURRENT_REPORTING_DATE_STR_JSON__;
+    const currentReportingHour = __CURRENT_REPORTING_HOUR__;
+    const dayStartHour = __DAY_START_HOUR__;
     const heatmapData = __HEATMAP_DATA_JSON__.map((d) => {
       const x = d[0];
       const y = d[1];
@@ -151,7 +154,8 @@
         hourly,
         tokenTotal,
         hourlyTokens,
-        projectTokens
+        projectTokens,
+        lastActivity: d[9] || null
       };
     });
     const weeks = Array.from({length: weekRanges.length}, (_, i) => i);
@@ -298,7 +302,7 @@
       const tokenFull = (tokenValues && tokenValues.length ? tokenValues : Array.from({length: 24}, () => 0));
       const startHour = 0;
       const endHour = 24;
-      const visibleEndHour = dateStr === currentLocalDateStr ? Math.min(endHour, currentLocalHour + 1) : endHour;
+      const visibleEndHour = dateStr === currentReportingDateStr ? Math.min(endHour, currentReportingHour + 1) : endHour;
       const activitySliced = activityFull.slice(startHour, visibleEndHour);
       const tokenSliced = tokenFull.slice(startHour, visibleEndHour).map((v) => Math.max(0, Number(v) || 0));
       const maxToken = Math.max(1, ...tokenSliced);
@@ -344,7 +348,9 @@
       const xTicks = xTickHours.map((t) => {
         const i = (t - startHour);
         const x = leftPad + (i / fullIntervalCount) * plotW;
-        return `<text x="${x}" y="${topPad + plotH + 28}" text-anchor="middle" font-size="12" fill="#6b7280">${t === 24 ? '24' : String(t).padStart(2, '0')}</text>`;
+        const hour = t + dayStartHour;
+        const label = `${hour >= 24 ? '次日' : ''}${String(hour % 24).padStart(2, '0')}`;
+        return `<text x="${x}" y="${topPad + plotH + 28}" text-anchor="middle" font-size="12" fill="#6b7280">${label}</text>`;
       }).join('');
       return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
         <rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="#ffffff"></rect>
@@ -360,26 +366,33 @@
       </svg>`;
     }
 
-    function dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens) {
+    function dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, lastActivity) {
       const dailySvg = dailySparklineSvg(hourly, hourlyTokens, date);
       const projectPieSvg = dailyProjectPieSvg(projectTokens);
       return `<div style="min-width: 580px;">
         <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
           <div style="font-size: 14px; font-weight: 700;">${date} ${weekday}</div>
-          <div style="display:flex; align-items:baseline; gap:12px;">
+          <div style="text-align:right;">
             <div style="font-size: 18px; font-weight: 800; color: #166534;">${workHours}h</div>
+            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">最晚操作：${lastActivity ? `约 ${escapeHtml(lastActivity)}` : '暂无记录'}</div>
           </div>
         </div>
         <div style="margin-bottom: 6px;">${dailySvg}</div>
         <div style="margin-bottom: 6px;">${projectPieSvg}</div>
-        <div style="font-size: 12px; color: #6b7280;">活跃度 / Token 用量趋势（00:00-24:00）</div>
+        <div style="font-size: 12px; color: #6b7280;">活跃度 / Token 用量趋势（${String(dayStartHour).padStart(2, '0')}:00–次日 ${String(dayStartHour).padStart(2, '0')}:00）</div>
       </div>`;
     }
 
     const contribBaseOption = {
       tooltip: {
-        position: 'top',
-        confine: true,
+        appendToBody: true,
+        confine: false,
+        position: (point, _params, _dom, _rect, size) => {
+          const bounds = contribEl.getBoundingClientRect();
+          const x = Math.max(8, Math.min(bounds.left + point[0] - size.contentSize[0] / 2, window.innerWidth - size.contentSize[0] - 8));
+          const y = Math.max(8, Math.min(bounds.top + point[1] - size.contentSize[1] - 12, window.innerHeight - size.contentSize[1] - 8));
+          return [x - bounds.left, y - bounds.top];
+        },
         backgroundColor: 'rgba(255, 255, 255, 0.98)',
         borderColor: '#dbe4ee',
         borderWidth: 1,
@@ -391,7 +404,7 @@
           const hourlyTokens = p.data && p.data.hourlyTokens ? p.data.hourlyTokens : [];
           const projectTokens = p.data && p.data.projectTokens ? p.data.projectTokens : [];
           const value = p.value && p.value.length ? p.value[2] : 0;
-          return dailyTooltipHtml(date, weekday, value, hourly, hourlyTokens, projectTokens);
+          return dailyTooltipHtml(date, weekday, value, hourly, hourlyTokens, projectTokens, p.data && p.data.lastActivity);
         }
       },
       xAxis: {
@@ -444,15 +457,18 @@
         data: heatmapData,
         label: {
           show: true,
+          align: 'center',
           fontSize: 12,
           fontWeight: 700,
           formatter: (p) => {
             const v = p.value && p.value.length ? p.value[2] : null;
-            if (v === null || v === undefined || v <= 0) return '';
+            const lastActivity = p.data && p.data.lastActivity;
+            if (v === null || v === undefined || (v <= 0 && !lastActivity)) return '';
             const hourText = `${v}h`;
-            if (v <= 2) return `{soft|${hourText}}`;
-            if (v <= 4) return `{mid|${hourText}}`;
-            return `{light|${hourText}}`;
+            const style = v <= 2 ? 'soft' : v <= 4 ? 'mid' : 'light';
+            const timeText = lastActivity && lastActivity.startsWith('次日 ')
+              ? `${lastActivity.slice(3)}⁺¹` : lastActivity;
+            return `{${style}|${hourText}}${timeText ? `\n{${style}Time|${timeText}}` : ''}`;
           },
           rich: {
             soft: {
@@ -471,7 +487,10 @@
               fontWeight: 700,
               textShadowColor: 'rgba(15, 23, 42, 0.18)',
               textShadowBlur: 6
-            }
+            },
+            softTime: { color: '#4b5563', fontSize: 12, fontWeight: 400, lineHeight: 14 },
+            midTime: { color: '#1f2937', fontSize: 12, fontWeight: 400, lineHeight: 14 },
+            lightTime: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: 400, lineHeight: 14 }
           }
         },
         itemStyle: {
@@ -501,9 +520,10 @@
       const bottomPadding = 20;
       const plotMaxWidth = Math.max(0, width - leftPadding - rightPadding);
       const plotMaxHeight = Math.max(0, height - topPadding - bottomPadding);
-      const cellSize = Math.max(10, Math.floor(Math.min(plotMaxWidth / weeks.length, plotMaxHeight / ylabels.length)));
-      const gridWidth = cellSize * weeks.length;
-      const gridHeight = cellSize * ylabels.length;
+      const cellWidth = Math.max(10, Math.floor(plotMaxWidth / weeks.length));
+      const cellHeight = Math.max(10, Math.floor(Math.min(cellWidth, plotMaxHeight / ylabels.length)));
+      const gridWidth = cellWidth * weeks.length;
+      const gridHeight = cellHeight * ylabels.length;
       const gridLeft = leftPadding + Math.max(0, Math.floor((plotMaxWidth - gridWidth) / 2));
       const gridTop = topPadding + Math.max(0, Math.floor((plotMaxHeight - gridHeight) / 2));
       contribChart.setOption({
@@ -542,6 +562,7 @@
     const trendHourlyValues = __TREND_HOURLY_VALUES_JSON__;
     const trendHourlyTokenValues = __TREND_HOURLY_TOKEN_VALUES_JSON__;
     const trendProjectTokenValues = __TREND_PROJECT_TOKEN_VALUES_JSON__;
+    const trendLastActivityValues = __TREND_LAST_ACTIVITY_VALUES_JSON__;
     const trendTokenAxisScale = __TREND_TOKEN_AXIS_SCALE_JSON__;
     const initialTokenScaleStrength = Math.round(
       Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
@@ -598,7 +619,7 @@
           const hourly = trendHourlyValues[index] || [];
           const hourlyTokens = trendHourlyTokenValues[index] || [];
           const projectTokens = trendProjectTokenValues[index] || [];
-          return dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens);
+          return dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, trendLastActivityValues[index]);
         }
       },
       grid: { top: 28, left: 50, right: 58, bottom: 50 },

@@ -7,6 +7,7 @@
 - Activity recording: `record.py`.
 - SQLite/iCloud cache layer: `storage.py`.
 - Local Codex token aggregation: `token_usage.py`.
+- Shared local 05:00 reporting-day boundary: `day_boundary.py`.
 - Chart data/rendering: `plot.py` + `plot_template.html`.
 
 ## Local Commands
@@ -15,7 +16,7 @@ Use the local venv for verification:
 
 ```bash
 /Users/bytedance/Downloads/.venv/bin/python3 -m unittest
-/Users/bytedance/Downloads/.venv/bin/python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py']]"
+/Users/bytedance/Downloads/.venv/bin/python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','day_boundary.py']]"
 ```
 
 ## Boundaries

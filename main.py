@@ -5,19 +5,22 @@ import subprocess
 import sys
 from datetime import datetime
 
+from day_boundary import reporting_date
+
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 
 
 def _build_status_title(now, storage, format_token_count, get_quota_status):
+    today = reporting_date(now)
     try:
-        today_seconds = storage.get_activity_seconds_for_date(now)
+        today_seconds = storage.get_activity_seconds_for_date(today)
         work_hours_title = f"{len(today_seconds) / 100:.1f}h"
     except Exception:
         work_hours_title = "--h"
 
     try:
-        day_key = now.strftime("%Y-%m-%d")
-        token_usage_by_day = storage.get_token_usage_by_date_range(now, now)
+        day_key = today.strftime("%Y-%m-%d")
+        token_usage_by_day = storage.get_token_usage_by_date_range(today, today)
         today_tokens = sum(token_usage_by_day.get(day_key, []))
         token_title = format_token_count(today_tokens)
     except Exception:

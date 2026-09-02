@@ -1,7 +1,13 @@
+import json
+import os
+import re
 import sys
+import tempfile
 import types
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
 
 
 sys.modules.setdefault(
@@ -13,6 +19,19 @@ import plot
 
 
 class PlotTokenDataTest(unittest.TestCase):
+    def test_last_activity_time_uses_latest_block_in_the_reporting_day(self):
+        cases = [
+            ([], None),
+            ([0], "05:00"),
+            ([18 * 3600 + 59 * 60 + 24, 0], "23:59"),
+            ([19 * 3600, 18 * 3600], "次日 00:00"),
+            ([21 * 3600 + 30 * 60, 0], "次日 02:30"),
+            ([24 * 3600 - 36], "次日 04:59"),
+        ]
+        for seconds, expected in cases:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(plot.format_last_activity_time(seconds), expected)
+
     def test_daily_token_usage_is_sum_of_hourly_values(self):
         self.assertEqual(plot.calculate_daily_token_usage([1, 2, 3] + [0 for _ in range(21)]), 6)
 
@@ -75,6 +94,7 @@ class PlotTokenDataTest(unittest.TestCase):
         self.assertEqual(plot.format_icloud_backup_time(datetime(2026, 6, 1, 14, 5)), "2026-06-01 14:05")
 
     def test_last_several_days_token_totals_match_hourly_arrays(self):
+        today_date = date(2026, 6, 1)
         old_get_token_usage = plot.storage.get_token_usage_by_date_range
         old_get_project_usage = plot.storage.get_token_project_usage_by_date_range
         old_get_activity = plot.storage.get_activity_seconds_for_date
@@ -107,9 +127,9 @@ class PlotTokenDataTest(unittest.TestCase):
             plot.storage.get_token_project_usage_by_date_range = fake_get_project_usage
             plot.storage.get_activity_seconds_for_date = lambda _day: []
 
-            _labels, _work_hours, _seconds_map, token_daily, token_map, project_token_map = plot.get_last_several_days_activities(3)
+            _labels, _work_hours, _seconds_map, token_daily, token_map, project_token_map = plot.get_last_several_days_activities(3, today_date)
 
-            start_day = datetime.now().date() - timedelta(days=2)
+            start_day = today_date - timedelta(days=2)
             expected = []
             for index in range(3):
                 day = start_day + timedelta(days=index)
@@ -127,6 +147,46 @@ class PlotTokenDataTest(unittest.TestCase):
     def test_trend_slice_uses_recorded_days_for_work_and_tokens(self):
         values = [10, 20, 30, 40, 0, 0]
         self.assertEqual(plot.slice_recent_trend_values(values, num_days=4, trend_days=3), [20, 30, 40])
+
+    def test_rendered_plot_changes_reporting_week_at_five(self):
+        for now, expected_day, expected_hour, expected_weekday in [
+            (datetime(2026, 6, 1, 4, 59, 59), date(2026, 5, 31), 23, 6),
+            (datetime(2026, 6, 1, 5), date(2026, 6, 1), 0, 0),
+        ]:
+            with self.subTest(now=now), tempfile.TemporaryDirectory() as tmp, patch.object(
+                plot, "datetime"
+            ) as clock, patch.object(plot, "storage") as storage, patch.object(plot, "serve_plot_html") as serve:
+                clock.now.return_value = now
+                storage.get_activity_seconds_for_date.return_value = list(range(0, 3600, 36))
+                storage.get_token_usage_by_date_range.return_value = {str(expected_day): [600] * 24}
+                storage.get_token_project_usage_by_date_range.return_value = {
+                    str(expected_day): [{"project": "sample", "tokens": 14400}],
+                }
+                storage.get_token_scale_strength.return_value = 0
+                storage.get_token_display_range.return_value = (0, 100)
+                storage.get_icloud_backup_time.return_value = None
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(tmp)
+                    plot.plot_fig()
+                finally:
+                    os.chdir(old_cwd)
+                html = (Path(tmp) / "log" / "work_intensity.html").read_text(encoding="utf-8")
+
+                clock.now.assert_called_once_with()
+                self.assertIn(f'const currentReportingDateStr = "{expected_day}";', html)
+                self.assertIn(f"const currentReportingHour = {expected_hour};", html)
+                self.assertIn("const dayStartHour = 5;", html)
+                self.assertNotRegex(html, r"__[A-Z_]+__")
+                heatmap = json.loads(re.search(r"const heatmapData = (.+)\.map", html).group(1))
+                self.assertEqual(len(heatmap), 23 * 7 + expected_weekday + 1)
+                self.assertEqual(heatmap[-1][0:3], [23, expected_weekday, 1.0])
+                self.assertEqual(heatmap[-1][4], str(expected_day))
+                self.assertEqual(heatmap[-1][6:9], [14400, [600] * 24, [{"project": "sample", "tokens": 14400}]])
+                self.assertEqual(heatmap[-1][9], "05:59")
+                last_activity = json.loads(re.search(r"const trendLastActivityValues = (.+);", html).group(1))
+                self.assertEqual(last_activity, ["05:59"] * 84)
+                serve.assert_called_once_with(html)
 
 
 if __name__ == "__main__":

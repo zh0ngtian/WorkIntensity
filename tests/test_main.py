@@ -1,10 +1,27 @@
 import unittest
-from datetime import datetime
+from datetime import date, datetime
+from unittest.mock import Mock
 
 import main
 
 
 class StatusTitleTest(unittest.TestCase):
+    def test_status_title_switches_at_five_and_quota_receives_real_time(self):
+        for now, expected_day in [
+            (datetime(2026, 1, 1, 4, 59, 59), date(2025, 12, 31)),
+            (datetime(2026, 1, 1, 5), date(2026, 1, 1)),
+        ]:
+            with self.subTest(now=now):
+                storage = Mock()
+                storage.get_activity_seconds_for_date.return_value = list(range(100))
+                storage.get_token_usage_by_date_range.return_value = {str(expected_day): [250]}
+                quota = Mock(return_value="82% · 7d12h")
+
+                self.assertEqual(main._build_status_title(now, storage, str, quota), "1.0h · 250 · 82% · 7d12h")
+                storage.get_activity_seconds_for_date.assert_called_once_with(expected_day)
+                storage.get_token_usage_by_date_range.assert_called_once_with(expected_day, expected_day)
+                quota.assert_called_once_with(now)
+
     def test_status_title_shows_today_work_hours_and_tokens(self):
         now = datetime(2026, 7, 26, 14, 30)
 

@@ -4,12 +4,14 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+from day_boundary import DAY_START_HOUR, reporting_date, reporting_hour
+
 
 DEFAULT_CODEX_ROOTS = (
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 )
-_FINGERPRINT_VERSION = "token_usage_v4_incremental"
+CACHE_VERSION = f"token_usage_v5_day_start_{DAY_START_HOUR}"
 _UNKNOWN_PROJECT = "unknown"
 
 
@@ -30,7 +32,7 @@ def iter_jsonl_file_records(roots=None):
 
 def build_fingerprint(file_records):
     digest = hashlib.sha256()
-    digest.update(_FINGERPRINT_VERSION.encode("ascii"))
+    digest.update(CACHE_VERSION.encode("ascii"))
     digest.update(b"\n")
     for path, size, mtime_ns in file_records:
         digest.update(path.encode("utf-8", errors="surrogateescape"))
@@ -242,8 +244,8 @@ def scan_token_file(path, start_offset=0, previous_total=None, fallback_model=""
                 events.append(
                     (
                         int(local_timestamp.timestamp() * 1_000_000),
-                        local_timestamp.strftime("%Y-%m-%d"),
-                        local_timestamp.hour,
+                        reporting_date(local_timestamp).strftime("%Y-%m-%d"),
+                        reporting_hour(local_timestamp),
                         delta,
                         dedup_key,
                         event_project,

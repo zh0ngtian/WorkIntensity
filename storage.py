@@ -3,9 +3,10 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import token_usage
+from day_boundary import DAY_START_HOUR, reporting_date
 
 
 _DB_LOCK = threading.Lock()
@@ -24,6 +25,7 @@ _BLOCKS_PER_DAY = 24 * 100
 _ICLOUD_BACKUP_INTERVAL_SECONDS = 3600
 _LAST_ICLOUD_BACKUP_AT = 0.0
 _TOKEN_USAGE_FINGERPRINT_KEY = "token_usage_fingerprint"
+_TOKEN_USAGE_VERSION_KEY = "token_usage_cache_version"
 _TOKEN_USAGE_TOTALS_CHECKSUM_KEY = "token_usage_totals_checksum"
 _TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
 _TOKEN_RANGE_START_SETTING_KEY = "token_range_start"
@@ -56,7 +58,7 @@ def get_icloud_backup_time():
 
 def _normalize_date(value):
     if isinstance(value, datetime):
-        return value.date()
+        return reporting_date(value)
     if isinstance(value, date):
         return value
     if isinstance(value, str):
@@ -353,7 +355,7 @@ def _import_legacy_log_if_needed(value):
         )
 
 
-def get_activity_seconds_for_date(value):
+def _get_activity_seconds_for_calendar_date(value):
     day = _date_to_day_key(value)
     _import_legacy_log_if_needed(day)
     conn = get_connection()
@@ -363,6 +365,17 @@ def get_activity_seconds_for_date(value):
             (day,),
         ).fetchall()
     return [_block_index_to_second(row[0]) for row in rows]
+
+
+def get_activity_seconds_for_date(value):
+    """Return active block offsets from 05:00 on the requested reporting date."""
+    day = _normalize_date(value)
+    start_second = DAY_START_HOUR * 3600
+    today_seconds = _get_activity_seconds_for_calendar_date(day)
+    next_day_seconds = _get_activity_seconds_for_calendar_date(day + timedelta(days=1))
+    return [second - start_second for second in today_seconds if second >= start_second] + [
+        second + 24 * 3600 - start_second for second in next_day_seconds if second < start_second
+    ]
 
 
 def _get_token_usage_fingerprint(conn):
@@ -479,6 +492,14 @@ def _replace_token_usage_cache(
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (_TOKEN_USAGE_FINGERPRINT_KEY, fingerprint),
+        )
+        conn.execute(
+            """
+            INSERT INTO token_usage_cache_meta(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (_TOKEN_USAGE_VERSION_KEY, token_usage.CACHE_VERSION),
         )
         _store_token_usage_totals_checksum(conn)
         conn.execute("COMMIT")
@@ -604,13 +625,18 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
 
     with _DB_LOCK:
         cached_fingerprint = _get_token_usage_fingerprint(conn)
-        if not force and cached_fingerprint == fingerprint:
+        version_row = conn.execute(
+            "SELECT value FROM token_usage_cache_meta WHERE key = ?",
+            (_TOKEN_USAGE_VERSION_KEY,),
+        ).fetchone()
+        version_matches = version_row is not None and version_row[0] == token_usage.CACHE_VERSION
+        if not force and version_matches and cached_fingerprint == fingerprint:
             return False
         file_states = _load_token_usage_file_states(conn)
         cached_totals_checksum = _get_token_usage_totals_checksum(conn)
         totals_checksum_matches = cached_totals_checksum == _calculate_token_usage_totals_checksum(conn)
 
-    if force or not file_states or not totals_checksum_matches:
+    if force or not version_matches or not file_states or not totals_checksum_matches:
         _full_refresh_token_usage_cache(conn, roots)
         sync_to_icloud()
         return True
@@ -840,11 +866,11 @@ def import_all_legacy_logs():
         if not _LEGACY_LOG_FILE_PATTERN.match(file_name):
             continue
         day = file_name[:-4]
-        before_count = len(get_activity_seconds_for_date(day))
+        before_count = len(_get_activity_seconds_for_calendar_date(day))
         legacy_path = os.path.join(_LOG_DIR, file_name)
         if before_count == 0 and os.path.exists(legacy_path):
             _import_legacy_log_if_needed(day)
-            after_count = len(get_activity_seconds_for_date(day))
+            after_count = len(_get_activity_seconds_for_calendar_date(day))
             if after_count > 0:
                 imported_days += 1
                 imported_files.append(file_name)

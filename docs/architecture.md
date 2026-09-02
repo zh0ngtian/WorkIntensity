@@ -7,9 +7,11 @@ WorkIntensity is a macOS status bar app that estimates local activity time and v
 1. `main.py` checks macOS Accessibility and Input Monitoring permissions, then starts a `rumps` status bar app.
 2. `record.py` listens for mouse, keyboard, and meeting-detection activity.
 3. `storage.py` writes activity into SQLite as deduplicated 36-second blocks.
-4. `token_usage.py` scans local Codex JSONL files and aggregates token usage by local day/hour and local day/project.
+4. `token_usage.py` scans local Codex JSONL files and aggregates token usage by reporting day/hour and reporting day/project.
 5. `codex_quota.py` asks `codex app-server` for the current Codex rate-limit bucket.
 6. `plot.py` reads the cached activity/token data and renders `log/work_intensity.html` from `plot_template.html`.
+
+`day_boundary.py` defines the shared reporting day: local 05:00 inclusive to next-day 05:00 exclusive, labeled with its starting date. Times before 05:00 belong to the preceding date, including for weekday/week placement. Status titles and plots use that reporting date; quota countdowns and event timestamps retain real time.
 
 ## Data Model
 
@@ -22,19 +24,21 @@ The local database lives at `log/work_intensity.sqlite3`.
 | `day` | Local date in `YYYY-MM-DD` format |
 | `block_index` | 36-second block index within that day |
 
+Activity storage and legacy logs retain calendar dates. `get_activity_seconds_for_date` joins the requested date's blocks from 05:00 onward with the next calendar date's blocks before 05:00, returning offsets in seconds from the reporting day's start. Legacy logs for both dates are imported if needed; stored activity needs no migration.
+
 `token_usage_hourly`
 
 | Column | Meaning |
 | --- | --- |
-| `day` | Local date in `YYYY-MM-DD` format |
-| `hour` | Local hour, `0` through `23` |
+| `day` | Reporting date in `YYYY-MM-DD` format |
+| `hour` | Reporting hour index, `0` = 05:00 through `23` = next-day 04:00 |
 | `total_tokens` | Aggregated Codex token count for that hour |
 
 `token_usage_project_daily`
 
 | Column | Meaning |
 | --- | --- |
-| `day` | Local date in `YYYY-MM-DD` format |
+| `day` | Reporting date in `YYYY-MM-DD` format |
 | `project` | Project name derived from the Codex session `cwd` basename |
 | `total_tokens` | Aggregated Codex token count for that project on that day |
 
@@ -45,7 +49,9 @@ The local database lives at `log/work_intensity.sqlite3`.
 | `key` | Cache metadata key |
 | `value` | Cache metadata value |
 
-The token cache stores a fingerprint of the local JSONL file list: path, size, and `mtime_ns`. If that fingerprint changes, the hourly and daily-project token caches are rebuilt.
+The token cache stores a fingerprint of the local JSONL file list (path, size, and `mtime_ns`) and an aggregation version that includes the day boundary. A missing or mismatched version forces a full rebuild of hourly totals, daily-project totals, deduplicated events, and incremental file states, even when the source files are unchanged. Matching versions allow appended content to be read incrementally; unsafe changes such as truncation trigger a full rebuild. These cache replacements are transactional and do not modify activity records.
+
+Date/string query arguments name a reporting date; datetime arguments are mapped to their reporting date. Token event timestamps remain unchanged for deduplication.
 
 ## Token Usage Source
 
@@ -72,6 +78,10 @@ The generated HTML has two main charts:
 
 - A 24-week heatmap of daily work hours. Hovering a day shows a combined hourly chart with activity percentage and token usage, plus a pie chart for that day's token share by project.
 - A 12-week daily trend chart with work hours on the left axis and token usage on the right axis. Hovering a day also shows that day's project token share.
+
+Heatmap cells show the estimated last activity time below work hours, with `⁺¹` for the next calendar day. Both chart tooltips show the full time and mark it as approximate. The value is the latest active block's start, formatted to minutes; it includes meeting detection, retains the existing 36-second resolution, and is absent for days with no activity. No additional activity data is stored.
+
+Hourly charts run from 05:00 through next-day 05:00, with next-day labels after midnight. Today's visible curve ends at the current reporting hour. A single local time snapshot determines each rendered plot's reporting date, week boundaries, and current hour.
 
 The HTML uses ECharts from jsDelivr, so chart rendering needs network access unless ECharts is vendored locally.
 
