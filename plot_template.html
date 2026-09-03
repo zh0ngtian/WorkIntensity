@@ -410,6 +410,7 @@
       xAxis: {
         type: 'category',
         data: weeks,
+        inverse: true,
         position: 'top',
         axisTick: { show: false },
         axisLine: { show: false },
@@ -421,8 +422,9 @@
           color: '#6b7280',
           margin: 10,
           formatter: (value) => {
-            if (value === 0) return monthLabels[0];
-            return monthLabels[value] !== monthLabels[value - 1] ? monthLabels[value] : '';
+            const weekIndex = Number(value);
+            if (weekIndex === weeks.length - 1) return monthLabels[weekIndex];
+            return monthLabels[weekIndex] !== monthLabels[weekIndex + 1] ? monthLabels[weekIndex] : '';
           }
         }
       },
@@ -641,9 +643,11 @@
       xAxis: {
         type: 'category',
         data: trendLabels,
+        inverse: true,
         boundaryGap: false,
         axisLabel: {
           interval: Math.max(0, Math.floor(trendLabels.length / 10) - 1),
+          showMaxLabel: true,
           fontSize: 12
         }
       },
