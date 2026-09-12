@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import os
 import signal
@@ -8,6 +9,31 @@ from datetime import datetime
 from day_boundary import reporting_date
 
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
+_TOS_CREDENTIALS_PATH = "/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json"
+
+
+def _copy_tos_credentials():
+    try:
+        with open(_TOS_CREDENTIALS_PATH, encoding="utf-8") as credentials_file:
+            credentials = json.load(credentials_file)
+        if not isinstance(credentials, dict):
+            raise ValueError("凭证文件必须是 JSON 对象")
+
+        exports = []
+        for key in ("AK", "SK", "TOKEN"):
+            value = credentials.get(key)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"凭证字段 {key} 缺失或不是非空字符串")
+            value = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+            exports.append(f'export {key}="{value}"')
+        subprocess.run(["pbcopy"], input=" && ".join(exports), text=True, check=True)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        subprocess.run(
+            ["pbcopy"],
+            input=f"复制凭证失败：{type(error).__name__}: {error}",
+            text=True,
+            check=True,
+        )
 
 
 def _build_status_title(now, storage, format_token_count, get_quota_status):
@@ -194,6 +220,13 @@ def main():
         def plot_button(self, _):
             p = multiprocessing.Process(target=plot.plot_fig)
             p.start()
+
+        @rumps.clicked("Copy")
+        def copy_button(self, _):
+            try:
+                _copy_tos_credentials()
+            except (OSError, subprocess.SubprocessError) as error:
+                rumps.alert(title="复制失败", message=f"无法将报错信息写入剪贴板：{error}")
 
     app = WorkIntensityStatusBarApp()
     app.run()

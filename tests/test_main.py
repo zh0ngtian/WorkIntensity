@@ -1,8 +1,79 @@
+import json
+import subprocess
+import tempfile
 import unittest
 from datetime import date, datetime
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import main
+
+
+class CopyCredentialsTest(unittest.TestCase):
+    def setUp(self):
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        self.path = Path(temporary_directory.name) / "tos-credentials.json"
+        path_patch = patch.object(main, "_TOS_CREDENTIALS_PATH", self.path)
+        path_patch.start()
+        self.addCleanup(path_patch.stop)
+
+    def test_copies_export_command_and_reads_latest_credentials(self):
+        with patch("main.subprocess.run") as copy:
+            for token in ["zzz", "updated"]:
+                self.path.write_text(json.dumps({"AK": "xxx", "SK": "yyy", "TOKEN": token}), encoding="utf-8")
+                main._copy_tos_credentials()
+                copy.assert_called_with(
+                    ["pbcopy"],
+                    input=f'export AK="xxx" && export SK="yyy" && export TOKEN="{token}"',
+                    text=True,
+                    check=True,
+                )
+
+    def test_export_command_preserves_shell_special_characters(self):
+        credentials = {"AK": 'a"b\\c', "SK": "$(printf expanded)`printf expanded`$HOME", "TOKEN": "x'y\nz+/="}
+        self.path.write_text(json.dumps(credentials), encoding="utf-8")
+        with patch("main.subprocess.run") as copy:
+            main._copy_tos_credentials()
+            command = copy.call_args.kwargs["input"]
+        for shell in ["/bin/sh", "/bin/zsh"]:
+            with self.subTest(shell=shell):
+                result = subprocess.run(
+                    [shell, "-c", command + ''' && printf '%s\\0' "$AK" "$SK" "$TOKEN"'''],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(result.stdout.split("\0"), [*credentials.values(), ""])
+
+    def test_copies_errors_for_missing_file_or_invalid_credentials(self):
+        invalid_contents = [
+            "{", "[]", "{}",
+            json.dumps({"AK": "xxx", "SK": "yyy"}),
+            json.dumps({"AK": "xxx", "SK": "yyy", "TOKEN": ""}),
+            json.dumps({"AK": "xxx", "SK": "yyy", "TOKEN": 123}),
+        ]
+        with patch("main.subprocess.run") as copy:
+            main._copy_tos_credentials()
+            self.assertIn("FileNotFoundError", copy.call_args.kwargs["input"])
+            for content in invalid_contents:
+                with self.subTest(content=content):
+                    self.path.write_text(content, encoding="utf-8")
+                    main._copy_tos_credentials()
+                    self.assertTrue(copy.call_args.kwargs["input"].startswith("复制凭证失败："))
+                    self.assertIn("Error:", copy.call_args.kwargs["input"])
+
+    def test_retries_copying_clipboard_error(self):
+        self.path.write_text(json.dumps({"AK": "xxx", "SK": "yyy", "TOKEN": "zzz"}), encoding="utf-8")
+        with patch("main.subprocess.run", side_effect=[OSError("clipboard unavailable"), None]) as copy:
+            main._copy_tos_credentials()
+            self.assertEqual(copy.call_count, 2)
+            copy.assert_called_with(
+                ["pbcopy"],
+                input="复制凭证失败：OSError: clipboard unavailable",
+                text=True,
+                check=True,
+            )
 
 
 class StatusTitleTest(unittest.TestCase):

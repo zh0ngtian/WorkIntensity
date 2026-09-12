@@ -8,6 +8,10 @@ pip3 install rumps pynput chinese-calendar pyobjc-framework-Quartz pyobjc-framew
 python3 main.py
 ```
 
+## 复制凭证
+
+点击菜单中的「Copy」，会读取 `/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json` 的 `AK`、`SK`、`TOKEN`，将 `export AK="xxx" && export SK="yyy" && export TOKEN="zzz"` 格式的命令复制到剪贴板。每次点击都会重新读取文件，并转义 shell 特殊字符。发生错误时，剪贴板会改为保存具体报错信息；若错误信息也无法写入剪贴板，则弹窗提示。
+
 ## 图表解释
 
 ![](imgs/example.png)
