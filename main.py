@@ -216,17 +216,17 @@ def main():
             except Exception:
                 pass
 
-        @rumps.clicked("Plot")
-        def plot_button(self, _):
-            p = multiprocessing.Process(target=plot.plot_fig)
-            p.start()
-
         @rumps.clicked("Copy")
         def copy_button(self, _):
             try:
                 _copy_tos_credentials()
             except (OSError, subprocess.SubprocessError) as error:
                 rumps.alert(title="复制失败", message=f"无法将报错信息写入剪贴板：{error}")
+
+        @rumps.clicked("Plot")
+        def plot_button(self, _):
+            p = multiprocessing.Process(target=plot.plot_fig)
+            p.start()
 
     app = WorkIntensityStatusBarApp()
     app.run()
