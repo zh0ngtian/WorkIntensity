@@ -18,19 +18,70 @@ sys.modules.setdefault(
 import plot
 
 
-class PlotTokenDataTest(unittest.TestCase):
-    def test_last_activity_time_uses_five_am_reporting_day(self):
-        cases = [
-            ([], None),
-            ([0], "05:00"),
-            ([18 * 3600 + 59 * 60 + 24, 0], "23:59"),
-            ([19 * 3600, 18 * 3600], "次日 00:00"),
-            ([21 * 3600 + 30 * 60, 0], "次日 02:30"),
-            ([24 * 3600 - 36], "次日 04:59"),
-        ]
-        for seconds, expected in cases:
+class OffWorkTimeTest(unittest.TestCase):
+    def test_requires_fifteen_minutes_of_distinct_active_blocks(self):
+        for seconds in ([], [0], [0] * 100, list(range(0, 24 * 36, 36))):
             with self.subTest(seconds=seconds):
-                self.assertEqual(plot.format_last_activity_time(seconds), expected)
+                self.assertIsNone(plot.estimate_off_work_time(seconds, 3600))
+        self.assertEqual(
+            plot.estimate_off_work_time(list(range(0, 25 * 36, 36)), 3600),
+            {"time": "05:14", "provisional": False},
+        )
+
+    def test_uses_a_sliding_thirty_minute_window(self):
+        # Fifteen active minutes spread over nearly thirty minutes qualify.
+        seconds = list(range(18 * 60, 18 * 60 + 25 * 72, 72))
+        self.assertEqual(
+            plot.estimate_off_work_time(seconds, 7200),
+            {"time": "05:46", "provisional": False},
+        )
+        # The oldest block cannot count once it falls outside the window.
+        self.assertIsNone(plot.estimate_off_work_time([0] + list(range(972, 1801, 36)), 7200))
+        self.assertIsNone(plot.estimate_off_work_time(list(range(0, 25 * 180, 180)), 7200))
+
+    def test_late_clicks_do_not_move_off_work_time_or_restart_confirmation(self):
+        work_end = 14 * 3600
+        seconds = list(range(work_end - 3600, work_end + 1, 36))
+        seconds += [18 * 3600, 18 * 3600 + 36]
+        self.assertEqual(
+            plot.estimate_off_work_time(list(reversed(seconds)) + seconds, 18 * 3600 + 60),
+            {"time": "19:00", "provisional": False},
+        )
+
+    def test_later_sustained_work_replaces_previous_end(self):
+        seconds = list(range(13 * 3600, 14 * 3600 + 1, 36))
+        seconds += list(range(17 * 3600, 18 * 3600 + 1, 36))
+        self.assertEqual(
+            plot.estimate_off_work_time(seconds, 18 * 3600 + 60),
+            {"time": "23:00", "provisional": True},
+        )
+
+    def test_confirmation_waits_thirty_minutes_after_the_last_block(self):
+        seconds = list(range(0, 900, 36))
+        for elapsed, provisional in [(899, True), (2699, True), (2700, False)]:
+            with self.subTest(elapsed=elapsed):
+                self.assertEqual(
+                    plot.estimate_off_work_time(seconds, elapsed),
+                    {"time": "05:14", "provisional": provisional},
+                )
+
+    def test_off_work_time_uses_five_am_reporting_day(self):
+        cases = [
+            (18 * 3600 + 59 * 60 + 24, "23:59"),
+            (19 * 3600, "次日 00:00"),
+            (21 * 3600 + 30 * 60, "次日 02:30"),
+            (24 * 3600 - 36, "次日 04:59"),
+        ]
+        for end, expected in cases:
+            with self.subTest(end=end):
+                seconds = list(range(end - 24 * 36, end + 1, 36))
+                self.assertEqual(
+                    plot.estimate_off_work_time(seconds, 24 * 3600 + 1800),
+                    {"time": expected, "provisional": False},
+                )
+
+
+class PlotTokenDataTest(unittest.TestCase):
 
     def test_daily_token_usage_is_sum_of_hourly_values(self):
         self.assertEqual(plot.calculate_daily_token_usage([1, 2, 3] + [0 for _ in range(21)]), 6)
@@ -157,7 +208,10 @@ class PlotTokenDataTest(unittest.TestCase):
                 plot, "datetime"
             ) as clock, patch.object(plot, "storage") as storage, patch.object(plot, "serve_plot_html") as serve:
                 clock.now.return_value = now
-                storage.get_activity_seconds_for_date.return_value = list(range(0, 3600, 36))
+                morning_seconds = list(range(0, 3600, 36))
+                storage.get_activity_seconds_for_date.side_effect = lambda day: (
+                    [] if day == expected_day and now.hour == 5 else morning_seconds
+                )
                 storage.get_token_usage_by_date_range.return_value = {str(expected_day): [600] * 24}
                 storage.get_token_project_usage_by_date_range.return_value = {
                     str(expected_day): [{"project": "sample", "tokens": 14400}],
@@ -180,13 +234,59 @@ class PlotTokenDataTest(unittest.TestCase):
                 self.assertNotRegex(html, r"__[A-Z_]+__")
                 heatmap = json.loads(re.search(r"const heatmapData = (.+)\.map", html).group(1))
                 self.assertEqual(len(heatmap), 23 * 7 + expected_weekday + 1)
-                self.assertEqual(heatmap[-1][0:3], [23, expected_weekday, 1.0])
+                expected_hours = 0 if now.hour == 5 else 1.0
+                self.assertEqual(heatmap[-1][0:3], [23, expected_weekday, expected_hours])
                 self.assertEqual(heatmap[-1][4], str(expected_day))
                 self.assertEqual(heatmap[-1][6:9], [14400, [600] * 24, [{"project": "sample", "tokens": 14400}]])
-                self.assertEqual(heatmap[-1][9], "05:59")
-                last_activity_values = json.loads(re.search(r"const trendLastActivityValues = (.+);", html).group(1))
-                self.assertEqual(last_activity_values, ["05:59"] * 84)
+                confirmed = {"time": "05:59", "provisional": False}
+                expected_off_work = None if now.hour == 5 else confirmed
+                self.assertEqual(heatmap[-1][9], expected_off_work)
+                off_work_values = json.loads(re.search(r"const trendOffWorkValues = (.+);", html).group(1))
+                self.assertEqual(off_work_values, [confirmed] * 83 + [expected_off_work])
                 serve.assert_called_once_with(html)
+
+    def test_rendered_off_work_confirmation_crosses_the_reporting_day_boundary(self):
+        for now, provisional in [
+            (datetime(2026, 9, 17, 5), True),
+            (datetime(2026, 9, 17, 5, 29, 59), True),
+            (datetime(2026, 9, 17, 5, 30), False),
+        ]:
+            today = now.date()
+            yesterday = today - timedelta(days=1)
+            day_before = today - timedelta(days=2)
+            activity = {
+                day_before: list(range(13 * 3600, 14 * 3600 + 1, 36)) + [18 * 3600],
+                yesterday: list(range(23 * 3600, 24 * 3600, 36)),
+                today: [0],
+            }
+            with self.subTest(now=now), tempfile.TemporaryDirectory() as tmp, patch.object(
+                plot, "datetime"
+            ) as clock, patch.object(plot, "storage") as storage, patch.object(plot, "serve_plot_html") as serve:
+                clock.now.return_value = now
+                storage.get_activity_seconds_for_date.side_effect = lambda day: activity.get(day, [])
+                storage.get_token_usage_by_date_range.return_value = {}
+                storage.get_token_project_usage_by_date_range.return_value = {}
+                storage.get_token_scale_strength.return_value = 0
+                storage.get_token_display_range.return_value = (0, 100)
+                storage.get_icloud_backup_time.return_value = None
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(tmp)
+                    plot.plot_fig()
+                finally:
+                    os.chdir(old_cwd)
+                html = serve.call_args.args[0]
+                self.assertNotRegex(html, r"__[A-Z_]+__")
+                heatmap = json.loads(re.search(r"const heatmapData = (.+)\.map", html).group(1))
+                off_work_values = json.loads(re.search(r"const trendOffWorkValues = (.+);", html).group(1))
+                expected = [
+                    {"time": "19:00", "provisional": False},
+                    {"time": "次日 04:59", "provisional": provisional},
+                    None,
+                ]
+                self.assertEqual([day[9] for day in heatmap[-3:]], expected)
+                self.assertEqual(off_work_values[-3:], expected)
+                self.assertTrue(all(value is None for value in off_work_values[:-3]))
 
 
 if __name__ == "__main__":

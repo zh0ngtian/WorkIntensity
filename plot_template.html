@@ -92,7 +92,7 @@
             <span class="box" style="background:#1f7a4d"></span>
             <span>多</span>
           </div>
-          <span class="legend-note">工时下方为下班时间（约）；⁺¹ 表示次日</span>
+          <span class="legend-note">工时下方为预计下班时间；* 表示暂定；⁺¹ 表示次日</span>
         </div>
       </div>
     </div>
@@ -155,7 +155,7 @@
         tokenTotal,
         hourlyTokens,
         projectTokens,
-        lastActivity: d[9] || null
+        offWork: d[9] || null
       };
     });
     const weeks = Array.from({length: weekRanges.length}, (_, i) => i);
@@ -366,15 +366,18 @@
       </svg>`;
     }
 
-    function dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, lastActivity) {
+    function dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, offWork) {
       const dailySvg = dailySparklineSvg(hourly, hourlyTokens, date);
       const projectPieSvg = dailyProjectPieSvg(projectTokens);
+      const offWorkText = offWork
+        ? `约 ${escapeHtml(offWork.time)}${offWork.provisional ? '（暂定）' : ''}`
+        : hourly.some((value) => value > 0) ? '无持续活动' : '暂无记录';
       return `<div style="min-width: 580px;">
         <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom: 8px;">
           <div style="font-size: 14px; font-weight: 700;">${date} ${weekday}</div>
           <div style="text-align:right;">
             <div style="font-size: 18px; font-weight: 800; color: #166534;">${workHours}h</div>
-            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">下班时间：${lastActivity ? `约 ${escapeHtml(lastActivity)}` : '暂无记录'}</div>
+            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">预计下班：${offWorkText}</div>
           </div>
         </div>
         <div style="margin-bottom: 6px;">${dailySvg}</div>
@@ -404,7 +407,7 @@
           const hourlyTokens = p.data && p.data.hourlyTokens ? p.data.hourlyTokens : [];
           const projectTokens = p.data && p.data.projectTokens ? p.data.projectTokens : [];
           const value = p.value && p.value.length ? p.value[2] : 0;
-          return dailyTooltipHtml(date, weekday, value, hourly, hourlyTokens, projectTokens, p.data && p.data.lastActivity);
+          return dailyTooltipHtml(date, weekday, value, hourly, hourlyTokens, projectTokens, p.data && p.data.offWork);
         }
       },
       xAxis: {
@@ -464,12 +467,13 @@
           fontWeight: 700,
           formatter: (p) => {
             const v = p.value && p.value.length ? p.value[2] : null;
-            const lastActivity = p.data && p.data.lastActivity;
-            if (v === null || v === undefined || (v <= 0 && !lastActivity)) return '';
+            const offWork = p.data && p.data.offWork;
+            if (v === null || v === undefined || (v <= 0 && !offWork)) return '';
             const hourText = `${v}h`;
             const style = v <= 2 ? 'soft' : v <= 4 ? 'mid' : 'light';
-            const timeText = lastActivity && lastActivity.startsWith('次日 ')
-              ? `${lastActivity.slice(3)}⁺¹` : lastActivity;
+            let timeText = offWork && (offWork.time.startsWith('次日 ')
+              ? `${offWork.time.slice(3)}⁺¹` : offWork.time);
+            if (offWork && offWork.provisional) timeText += '*';
             return `{${style}|${hourText}}${timeText ? `\n{${style}Time|${timeText}}` : ''}`;
           },
           rich: {
@@ -579,7 +583,7 @@
     const trendHourlyValues = __TREND_HOURLY_VALUES_JSON__;
     const trendHourlyTokenValues = __TREND_HOURLY_TOKEN_VALUES_JSON__;
     const trendProjectTokenValues = __TREND_PROJECT_TOKEN_VALUES_JSON__;
-    const trendLastActivityValues = __TREND_LAST_ACTIVITY_VALUES_JSON__;
+    const trendOffWorkValues = __TREND_OFF_WORK_VALUES_JSON__;
     const trendTokenAxisScale = __TREND_TOKEN_AXIS_SCALE_JSON__;
     const initialTokenScaleStrength = Math.round(
       Math.max(0, Math.min(1, Number(trendTokenAxisScale.compression) || 0)) * 100
@@ -636,7 +640,7 @@
           const hourly = trendHourlyValues[index] || [];
           const hourlyTokens = trendHourlyTokenValues[index] || [];
           const projectTokens = trendProjectTokenValues[index] || [];
-          return dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, trendLastActivityValues[index]);
+          return dailyTooltipHtml(date, weekday, workHours, hourly, hourlyTokens, projectTokens, trendOffWorkValues[index]);
         }
       },
       grid: { top: 28, left: 50, right: 58, bottom: 50 },

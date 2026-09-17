@@ -3,7 +3,7 @@ import json
 import math
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import webbrowser
 
@@ -16,6 +16,9 @@ from day_boundary import DAY_START_HOUR, reporting_date, reporting_hour
 TOKEN_AXIS_SEGMENT_COUNT = 5
 PLOT_SERVER_IDLE_TIMEOUT_SECONDS = 60 * 60
 PLOT_SERVER_CLOSE_DELAY_SECONDS = 2
+OFF_WORK_WINDOW_SECONDS = 30 * 60
+OFF_WORK_MIN_ACTIVE_SECONDS = 15 * 60
+OFF_WORK_CONFIRMATION_SECONDS = 30 * 60
 
 
 class _PlotRequestHandler(BaseHTTPRequestHandler):
@@ -144,14 +147,27 @@ def calculate_daily_work_hours(seconds_list):
     return round(sum(activities_per_hour), 1)
 
 
-def format_last_activity_time(seconds_list):
-    """Estimate the off-work time from the final 36-second block's start."""
-    if not seconds_list:
+def estimate_off_work_time(seconds_list, elapsed_seconds):
+    """Find the last sustained activity, using offsets from the reporting day's 05:00."""
+    block_duration = 36
+    seconds_list = sorted({second for second in seconds_list if second <= elapsed_seconds})
+    window_start = 0
+    last_sustained_second = None
+    for index, second in enumerate(seconds_list):
+        while second - seconds_list[window_start] >= OFF_WORK_WINDOW_SECONDS:
+            window_start += 1
+        if (index - window_start + 1) * block_duration >= OFF_WORK_MIN_ACTIVE_SECONDS:
+            last_sustained_second = second
+
+    if last_sustained_second is None:
         return None
-    seconds = max(seconds_list) + DAY_START_HOUR * 3600
+    seconds = last_sustained_second + DAY_START_HOUR * 3600
     minutes = (seconds % (24 * 3600)) // 60
     prefix = "次日 " if seconds >= 24 * 3600 else ""
-    return f"{prefix}{minutes // 60:02d}:{minutes % 60:02d}"
+    return {
+        "time": f"{prefix}{minutes // 60:02d}:{minutes % 60:02d}",
+        "provisional": elapsed_seconds < last_sustained_second + block_duration + OFF_WORK_CONFIRMATION_SECONDS,
+    }
 
 
 def calculate_hourly_percent(seconds_list):
@@ -293,8 +309,15 @@ def plot_fig():
         day_token_map,
         day_project_token_map,
     ) = get_last_several_days_activities(num_days, today_date)
-    day_last_activity_map = {
-        day: format_last_activity_time(seconds) for day, seconds in day_seconds_map.items()
+    today_start = now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
+    if now.hour < DAY_START_HOUR:
+        today_start -= timedelta(days=1)
+    today_elapsed_seconds = (now - today_start).total_seconds()
+    day_off_work_map = {
+        day: estimate_off_work_time(
+            seconds, today_elapsed_seconds + (today_date - date.fromisoformat(day)).days * 24 * 3600
+        )
+        for day, seconds in day_seconds_map.items()
     }
 
     for i in range(num_days, week_number * 7):
@@ -336,7 +359,7 @@ def plot_fig():
                     daily_tokens,
                     hourly_tokens,
                     project_tokens,
-                    day_last_activity_map.get(day_key),
+                    day_off_work_map.get(day_key),
                 ]
             )
 
@@ -356,7 +379,7 @@ def plot_fig():
     trend_hourly_values = [calculate_hourly_percent(day_seconds_map.get(day_key, [])) for day_key in trend_dates]
     trend_hourly_token_values = [day_token_map.get(day_key, [0 for _ in range(24)]) for day_key in trend_dates]
     trend_project_token_values = [day_project_token_map.get(day_key, []) for day_key in trend_dates]
-    trend_last_activity_values = [day_last_activity_map.get(day_key) for day_key in trend_dates]
+    trend_off_work_values = [day_off_work_map.get(day_key) for day_key in trend_dates]
     trend_max = max(trend_values, default=0)
     trend_y_max = max(9, int(trend_max) + 1)
     trend_total = round(sum(trend_values), 1)
@@ -407,7 +430,7 @@ def plot_fig():
         "__TREND_HOURLY_VALUES_JSON__": json.dumps(trend_hourly_values, ensure_ascii=False),
         "__TREND_HOURLY_TOKEN_VALUES_JSON__": json.dumps(trend_hourly_token_values, ensure_ascii=False),
         "__TREND_PROJECT_TOKEN_VALUES_JSON__": json.dumps(trend_project_token_values, ensure_ascii=False),
-        "__TREND_LAST_ACTIVITY_VALUES_JSON__": json.dumps(trend_last_activity_values, ensure_ascii=False),
+        "__TREND_OFF_WORK_VALUES_JSON__": json.dumps(trend_off_work_values, ensure_ascii=False),
         "__TREND_TOKEN_AXIS_SCALE_JSON__": json.dumps(trend_token_axis_scale, ensure_ascii=False),
         "__TOKEN_RANGE_START__": str(token_range_start),
         "__TOKEN_RANGE_END__": str(token_range_end),

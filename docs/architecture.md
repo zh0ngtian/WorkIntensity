@@ -79,7 +79,9 @@ The generated HTML has two main charts:
 - A 24-week heatmap of daily work hours. Hovering a day shows a combined hourly chart with activity percentage and token usage, plus a pie chart for that day's token share by project.
 - A 12-week daily trend chart with work hours on the left axis and token usage on the right axis. Hovering a day also shows that day's project token share.
 
-Heatmap cells display the estimated off-work time below work hours, with ⁺¹ marking the next calendar day. Daily tooltips also show this time. It uses the last active 36-second block's start, formatted to the minute; days without activity have no cell label and show no record in the tooltip.
+Heatmap cells display the estimated off-work time below work hours, with ⁺¹ marking the next calendar day and * marking a provisional estimate. Daily tooltips show the same estimate and status. `estimate_off_work_time` in `plot.py` scans rolling 30-minute windows of distinct 36-second activity blocks. A window qualifies with at least 15 active minutes (25 blocks); the last active block in the final qualifying window supplies the time, formatted to the minute. Later isolated activity that does not qualify a window cannot move the estimate or restart confirmation; a later qualifying window updates it. Input and meeting activity use the same rule.
+
+The estimate stays provisional until 30 minutes after that block ends, including when confirmation crosses the 05:00 reporting-day boundary. Both charts use the same estimate and the plot's single time snapshot; reopening Plot recalculates the status. Days with activity but no qualifying window have no time label and show “无持续活动” in tooltips; days without activity show “暂无记录”. This inference does not change recorded blocks or daily work-hour totals.
 
 Hourly charts run from 05:00 through next-day 05:00, with next-day labels after midnight. Today's visible curve ends at the current reporting hour. A single local time snapshot determines each rendered plot's reporting date, week boundaries, and current hour.
 
