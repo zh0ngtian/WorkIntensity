@@ -8,6 +8,8 @@ pip3 install rumps pynput chinese-calendar pyobjc-framework-Quartz pyobjc-framew
 python3 main.py
 ```
 
+读取压缩的 Codex 历史日志还需要 `zstd`（`brew install zstd`）。
+
 ## 复制凭证
 
 点击菜单中的「Copy」，会读取 `/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json` 的 `AK`、`SK`、`TOKEN`，将 `export AK="xxx" && export SK="yyy" && export TOKEN="zzz"` 格式的命令复制到剪贴板。每次点击都会重新读取文件，并转义 shell 特殊字符。发生错误时，剪贴板会改为保存具体报错信息；若错误信息也无法写入剪贴板，则弹窗提示。
@@ -41,7 +43,7 @@ python3 main.py
 
 ## 每日 token 用量计算方式
 
-程序只读取本地 Codex JSONL 会话文件，不拉取远程数据。扫描范围为：
+程序只读取本地 Codex JSONL 会话文件（包括 `.jsonl.zst` 压缩日志），不拉取远程数据。扫描范围为：
 
 * `~/.codex/sessions`
 * `~/.codex/archived_sessions`
@@ -59,7 +61,9 @@ python3 main.py
 
 活动记录保留原始自然日和 36 秒时间块，查询时合并当天 05:00 后与次日 05:00 前的数据；历史活动和旧日志无需修改。
 
-token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite 数据库中。首次使用 05:00 规则时，会从本地 JSONL 完整重建缓存；之后通过文件清单指纹检查变化，对追加内容增量更新，遇到文件截断等情况则完整重建。
+token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite 数据库中。缓存版本升级时，会从本地 JSONL 完整重建缓存；之后通过文件清单指纹检查变化。增量读取前会校验已读内容的 SHA-256，仅解析新追加的内容；遇到文件截断或历史内容被改写（即使文件变大）时则完整重建，避免把历史累计值误计为新增用量。
+
+压缩日志通过本地 `zstd` 流式读取，不会解压或修改原始文件；压缩文件变化时完整重建缓存，未变化时复用缓存。缺少解压工具或解压失败时保留已有缓存，避免历史统计被不完整结果覆盖。
 
 ## Codex 套餐余量
 

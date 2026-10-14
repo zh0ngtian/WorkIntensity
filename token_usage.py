@@ -1,6 +1,9 @@
 import hashlib
 import json
+import shutil
+import subprocess
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +14,7 @@ DEFAULT_CODEX_ROOTS = (
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 )
-CACHE_VERSION = f"token_usage_v5_day_start_{DAY_START_HOUR}"
+CACHE_VERSION = f"token_usage_v7_zstd_day_start_{DAY_START_HOUR}"
 _UNKNOWN_PROJECT = "unknown"
 
 
@@ -21,7 +24,9 @@ def iter_jsonl_file_records(roots=None):
         root_path = Path(root).expanduser()
         if not root_path.exists():
             continue
-        for path in root_path.rglob("*.jsonl"):
+        for path in root_path.rglob("*.jsonl*"):
+            if not (path.name.endswith(".jsonl") or path.name.endswith(".jsonl.zst")):
+                continue
             try:
                 stat = path.stat()
             except OSError:
@@ -156,14 +161,40 @@ def _extract_token_event(obj, fallback_model="", project=_UNKNOWN_PROJECT):
     return obj.get("timestamp"), total_tokens, _codex_token_dedup_key(info, fallback_model), project
 
 
+@contextmanager
+def _open_token_file(path):
+    if not str(path).endswith(".jsonl.zst"):
+        with Path(path).open("rb") as file:
+            yield file
+        return
+
+    zstd = shutil.which("zstd")
+    if zstd is None:
+        zstd = next((str(p) for p in (Path("/opt/homebrew/bin/zstd"), Path("/usr/local/bin/zstd")) if p.is_file()), None)
+    if zstd is None:
+        raise RuntimeError("Reading compressed Codex logs requires zstd (brew install zstd)")
+    process = subprocess.Popen([zstd, "-q", "-d", "-c", "--", str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        yield process.stdout
+        error = process.stderr.read()
+        if process.wait() != 0:
+            raise RuntimeError(f"Could not decompress {path}: {error.decode('utf-8', errors='replace').strip()}")
+    finally:
+        process.stdout.close()
+        process.stderr.close()
+        if process.poll() is None:
+            process.terminate()
+        process.wait()
+
+
 def _iter_token_events(path):
     try:
         fallback_model = ""
         project = _UNKNOWN_PROJECT
-        with Path(path).open("r", encoding="utf-8", errors="replace") as file:
+        with _open_token_file(path) as file:
             for line in file:
                 try:
-                    obj = json.loads(line)
+                    obj = json.loads(line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     continue
 
@@ -188,22 +219,33 @@ def _iter_token_events(path):
         return
 
 
-def scan_token_file(path, start_offset=0, previous_total=None, fallback_model="", project=_UNKNOWN_PROJECT):
+def scan_token_file(
+    path, start_offset=0, previous_total=None, fallback_model="", project=_UNKNOWN_PROJECT,
+    expected_prefix_hash=None,
+):
     events = []
     processed_size = start_offset
+    digest = hashlib.sha256()
     try:
-        with Path(path).open("rb") as file:
-            file.seek(start_offset)
+        with _open_token_file(path) as file:
+            # A larger file may have been rewritten, not merely appended to.
+            remaining = start_offset
+            while remaining:
+                chunk = file.read(min(remaining, 1024 * 1024))
+                if not chunk:
+                    return {"ok": True, "prefix_changed": True}
+                digest.update(chunk)
+                remaining -= len(chunk)
+            if expected_prefix_hash is not None and digest.hexdigest() != expected_prefix_hash:
+                return {"ok": True, "prefix_changed": True}
             while True:
-                line_start = file.tell()
                 line = file.readline()
                 if not line:
-                    processed_size = file.tell()
                     break
                 if not line.endswith(b"\n"):
-                    processed_size = line_start
                     break
-                processed_size = file.tell()
+                processed_size += len(line)
+                digest.update(line)
 
                 try:
                     obj = json.loads(line.decode("utf-8", errors="replace"))
@@ -264,7 +306,9 @@ def scan_token_file(path, start_offset=0, previous_total=None, fallback_model=""
     return {
         "ok": True,
         "events": events,
-        "processed_size": processed_size,
+        # Compressed files are immutable snapshots, tracked by on-disk size.
+        "processed_size": Path(path).stat().st_size if str(path).endswith(".jsonl.zst") else processed_size,
+        "prefix_hash": digest.hexdigest(),
         "previous_total": previous_total,
         "fallback_model": fallback_model,
         "project": project,
@@ -290,6 +334,7 @@ def aggregate_hourly_token_usage(roots=None):
             "device": stat.st_dev,
             "inode": stat.st_ino,
             "processed_size": scan["processed_size"],
+            "prefix_hash": scan["prefix_hash"],
             "mtime_ns": stat.st_mtime_ns,
             "previous_total": scan["previous_total"],
             "fallback_model": scan["fallback_model"],

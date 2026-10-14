@@ -49,7 +49,7 @@ Activity storage and legacy logs retain calendar dates. `get_activity_seconds_fo
 | `key` | Cache metadata key |
 | `value` | Cache metadata value |
 
-The token cache stores a fingerprint of the local JSONL file list (path, size, and `mtime_ns`) and an aggregation version that includes the day boundary. A missing or mismatched version forces a full rebuild of hourly totals, daily-project totals, deduplicated events, and incremental file states, even when the source files are unchanged. Matching versions allow appended content to be read incrementally; unsafe changes such as truncation trigger a full rebuild. These cache replacements are transactional and do not modify activity records.
+The token cache stores a fingerprint of the local JSONL file list (path, size, and `mtime_ns`) and an aggregation version that includes the day boundary. A missing or mismatched version forces a full rebuild of hourly totals, daily-project totals, deduplicated events, and incremental file states, even when the source files are unchanged. File states include a SHA-256 `prefix_hash` of the bytes through `processed_size`, excluding any incomplete final line. Incremental reads hash the already-processed prefix before parsing appended content; a changed prefix or truncation triggers a full rebuild, including when a rewritten file has grown. Existing file-state tables gain the hash column automatically, and the cache version forces its initialization. These cache replacements are transactional and do not modify activity records.
 
 Date/string query arguments name a reporting date; datetime arguments are mapped to their reporting date. Token event timestamps remain unchanged for deduplication.
 
@@ -61,6 +61,8 @@ Token usage is local-only. The scanner recursively reads:
 - `~/.codex/archived_sessions`
 
 For each JSONL file, token events are `event_msg` entries whose payload has `type == "token_count"`. The displayed metric uses `payload.info.total_token_usage.total_tokens`.
+
+Both `.jsonl` and `.jsonl.zst` files are included. Compressed history is streamed through the local `zstd` executable (PATH or the standard Homebrew locations), without extracting or changing source files. For compressed file states, `processed_size` is the on-disk compressed size; their `prefix_hash` covers the decompressed complete lines. Unchanged compressed snapshots reuse the cache, while changed snapshots trigger a full rebuild instead of attempting an incremental byte offset. Missing `zstd` or decompression failures abort refresh before replacing existing totals.
 
 Within each file, the value is cumulative. The aggregator counts the first total, then only positive deltas between consecutive totals. Duplicate totals are ignored. If the total drops, the new total starts a new sequence.
 

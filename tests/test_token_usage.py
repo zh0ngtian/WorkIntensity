@@ -1,6 +1,8 @@
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -74,7 +76,52 @@ def _bucket(timestamp):
     return local_time.strftime("%Y-%m-%d"), local_time.hour
 
 
+def _compress_jsonl(path):
+    compressed = path.with_suffix(".jsonl.zst")
+    subprocess.run([shutil.which("zstd"), "-q", "-f", str(path), "-o", str(compressed)], check=True)
+    return compressed
+
+
 class TokenUsageAggregationTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_compressed_history_keeps_projects_and_dedupes_plain_replays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            archived = root / "archived_sessions"
+            sessions.mkdir()
+            archived.mkdir()
+            original = archived / "original.jsonl"
+            original.write_text(
+                _session_meta_line("/tmp/historical-project") + "\n"
+                + _detailed_token_count_line("2026-05-16T00:00:00Z", 100, 100, 100) + "\n"
+                + _detailed_token_count_line("2026-05-16T01:00:00Z", 250, 250, 150) + "\n",
+                encoding="utf-8",
+            )
+            compressed = _compress_jsonl(original)
+            replay = sessions / "replay.jsonl"
+            replay.write_bytes(original.read_bytes())
+            original.unlink()
+            other = sessions / "other.jsonl"
+            other.write_text(
+                _session_meta_line("/tmp/other-project") + "\n"
+                + _detailed_token_count_line("2026-05-16T02:00:00Z", 70, 70, 70) + "\n",
+                encoding="utf-8",
+            )
+            _compress_jsonl(other)
+            other.unlink()
+            (sessions / "ignored.jsonl.tmp").write_bytes(replay.read_bytes())
+
+            result = token_usage.aggregate_hourly_token_usage([sessions, archived])
+
+            self.assertEqual(result["project_daily_totals"], {
+                ("2026-05-16", "historical-project"): 250,
+                ("2026-05-16", "other-project"): 70,
+            })
+            self.assertEqual(sum(result["hourly_totals"].values()), 320)
+            self.assertEqual(len(result["file_states"]), 3)
+            self.assertEqual(result["file_states"][str(compressed)]["processed_size"], compressed.stat().st_size)
+
     def test_utc_events_use_local_five_am_boundary_and_keep_real_timestamps(self):
         local_times = [
             datetime(2026, 5, 31, 5),
@@ -273,6 +320,61 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         )
         return path
 
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_compression_preserves_history_and_plain_appends_stay_incremental(self):
+        history = self._write_jsonl([100, 250])
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        _compress_jsonl(history)
+        history.unlink()
+        self.assertTrue(storage.refresh_token_usage_cache_if_needed(roots=[self.root]))
+        self.assertFalse(storage.refresh_token_usage_cache_if_needed(roots=[self.root]))
+        live = self.root / "live.jsonl"
+        live.write_text(
+            _session_meta_line("/tmp/live-project") + "\n"
+            + _token_count_line("2026-05-16T02:00:00Z", 50) + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(token_usage, "aggregate_hourly_token_usage", side_effect=AssertionError("unexpected full rebuild")):
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+            with live.open("a") as file:
+                file.write(_token_count_line("2026-05-16T03:00:00Z", 90) + "\n")
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        usage = storage.get_token_project_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+        self.assertEqual(usage["2026-05-16"], [
+            {"project": "cache-project", "tokens": 250},
+            {"project": "live-project", "tokens": 90},
+        ])
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_changed_compressed_history_rebuilds_and_corruption_keeps_cache(self):
+        history = self._write_jsonl([100, 250])
+        compressed = _compress_jsonl(history)
+        history.unlink()
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        self._write_jsonl([70, 180, 300])
+        _compress_jsonl(history)
+        history.unlink()
+        with patch.object(token_usage, "aggregate_hourly_token_usage", wraps=token_usage.aggregate_hourly_token_usage) as aggregate:
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+            aggregate.assert_called_once_with([self.root])
+        before = storage.get_connection().execute("SELECT * FROM token_usage_project_daily").fetchall()
+        self.assertEqual(before, [("2026-05-16", "cache-project", 300)])
+        compressed.write_bytes(b"invalid zstd")
+        with self.assertRaisesRegex(RuntimeError, "Could not decompress"):
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        self.assertEqual(storage.get_connection().execute("SELECT * FROM token_usage_project_daily").fetchall(), before)
+
+    def test_missing_decompressor_keeps_existing_cache(self):
+        self._write_jsonl([100, 250])
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        (self.root / "history.jsonl.zst").write_bytes(b"compressed")
+        with patch.object(token_usage.shutil, "which", return_value=None), patch.object(Path, "is_file", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "requires zstd"):
+                storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        self.assertEqual(storage.get_connection().execute("SELECT * FROM token_usage_project_daily").fetchall(), [
+            ("2026-05-16", "cache-project", 250),
+        ])
+
     def test_cache_reuses_same_fingerprint_and_rebuilds_on_change(self):
         self._write_jsonl([100])
         first = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
@@ -326,7 +428,7 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
             storage.refresh_token_usage_cache_if_needed(roots=[self.root])
         original_states = storage._load_token_usage_file_states(conn)
 
-        for old_version in (None, "token_usage_v4_incremental"):
+        for old_version in (None, "token_usage_v4_incremental", "token_usage_v5_day_start_5", "token_usage_v6_prefix_hash_day_start_5"):
             with self.subTest(old_version=old_version):
                 conn.execute("DELETE FROM token_usage_cache_meta WHERE key = ?", (storage._TOKEN_USAGE_VERSION_KEY,))
                 if old_version is not None:
@@ -367,6 +469,22 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         self.assertEqual(storage.get_token_project_usage_by_date_range(before, before, refresh=False), {
             "2025-12-31": [{"project": "boundary-project", "tokens": 100}],
         })
+
+    def test_old_file_state_schema_is_migrated_and_rebuilt(self):
+        self.log_dir.mkdir()
+        with sqlite3.connect(storage._DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE token_usage_file_state (
+                    path TEXT PRIMARY KEY, device INTEGER, inode INTEGER,
+                    processed_size INTEGER, mtime_ns INTEGER, previous_total INTEGER,
+                    fallback_model TEXT, project TEXT
+                )
+            """)
+        path = self._write_jsonl([100, 250])
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        state = storage._load_token_usage_file_states(storage.get_connection())[str(path)]
+        self.assertEqual(state["prefix_hash"], token_usage.scan_token_file(path)["prefix_hash"])
+        self.assertFalse(storage.refresh_token_usage_cache_if_needed(roots=[self.root]))
 
     def test_token_scale_strength_is_persisted_and_clamped(self):
         self.assertEqual(storage.get_token_scale_strength(), 0)
@@ -464,6 +582,29 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         self.assertEqual(sum(usage["2026-05-16"]), 50)
         self.assertEqual(len(aggregate_calls), 1)
 
+    def test_growing_rewritten_jsonl_rebuilds_instead_of_reusing_old_offset(self):
+        path = self._write_jsonl([100, 250])
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        # Keep the inode and grow the file, but replace its already-read history.
+        path.write_text(
+            _session_meta_line("/tmp/rewritten-project") + "\n"
+            + json.dumps({"type": "turn_context", "payload": {"model": "new-model"}}) + "\n"
+            + _token_count_line("2026-05-16T00:00:00Z", 50) + "\n"
+            + _token_count_line("2026-05-16T01:00:00Z", 80) + "\n"
+            + _token_count_line("2026-05-16T02:00:00Z", 120) + "\n",
+            encoding="utf-8",
+        )
+        expected = token_usage.aggregate_hourly_token_usage([self.root])
+        with patch.object(token_usage, "aggregate_hourly_token_usage", wraps=token_usage.aggregate_hourly_token_usage) as aggregate:
+            storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+            aggregate.assert_called_once_with([self.root])
+        conn = storage.get_connection()
+        actual = {(day, project): total for day, project, total in conn.execute(
+            "SELECT day, project, total_tokens FROM token_usage_project_daily"
+        )}
+        self.assertEqual(actual, expected["project_daily_totals"])
+        self.assertEqual(storage._load_token_usage_file_states(conn), expected["file_states"])
+
     def test_incremental_reader_waits_for_complete_jsonl_line(self):
         path = self._write_jsonl([100])
         storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
@@ -480,6 +621,10 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
 
         self.assertEqual(sum(partial["2026-05-16"]), 100)
         self.assertEqual(sum(complete["2026-05-16"]), 250)
+        self.assertEqual(
+            storage._load_token_usage_file_states(storage.get_connection()),
+            token_usage.aggregate_hourly_token_usage([self.root])["file_states"],
+        )
 
     def test_incremental_earlier_dedup_event_replaces_cached_replay(self):
         replay = self.root / "replay.jsonl"

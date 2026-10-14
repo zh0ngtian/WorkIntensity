@@ -130,10 +130,13 @@ def _ensure_tables(conn):
             mtime_ns INTEGER NOT NULL,
             previous_total INTEGER,
             fallback_model TEXT NOT NULL,
-            project TEXT NOT NULL
+            project TEXT NOT NULL,
+            prefix_hash TEXT NOT NULL DEFAULT ''
         ) WITHOUT ROWID
         """
     )
+    if "prefix_hash" not in {row[1] for row in conn.execute("PRAGMA table_info(token_usage_file_state)")}:
+        conn.execute("ALTER TABLE token_usage_file_state ADD COLUMN prefix_hash TEXT NOT NULL DEFAULT ''")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS token_usage_dedup_event (
@@ -468,8 +471,8 @@ def _replace_token_usage_cache(
                 """
                 INSERT INTO token_usage_file_state(
                     path, device, inode, processed_size, mtime_ns,
-                    previous_total, fallback_model, project
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    previous_total, fallback_model, project, prefix_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -481,6 +484,7 @@ def _replace_token_usage_cache(
                         state["previous_total"],
                         state["fallback_model"],
                         state["project"],
+                        state["prefix_hash"],
                     )
                     for path, state in file_states.items()
                 ],
@@ -512,7 +516,7 @@ def _load_token_usage_file_states(conn):
     rows = conn.execute(
         """
         SELECT path, device, inode, processed_size, mtime_ns,
-               previous_total, fallback_model, project
+               previous_total, fallback_model, project, prefix_hash
         FROM token_usage_file_state
         """
     ).fetchall()
@@ -525,6 +529,7 @@ def _load_token_usage_file_states(conn):
             "previous_total": row[5],
             "fallback_model": row[6],
             "project": row[7],
+            "prefix_hash": row[8],
         }
         for row in rows
     }
@@ -690,6 +695,9 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
             if old_path != current["path"]:
                 updates.append((old_path, current, None, state))
             continue
+        elif current["path"].endswith(".jsonl.zst"):
+            unsafe_change = True
+            break
         elif current["size"] > state["processed_size"]:
             scan = token_usage.scan_token_file(
                 current["path"],
@@ -697,6 +705,7 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
                 previous_total=state["previous_total"],
                 fallback_model=state["fallback_model"],
                 project=state["project"],
+                expected_prefix_hash=state["prefix_hash"],
             )
         else:
             unsafe_change = True
@@ -704,6 +713,9 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
 
         if not scan["ok"]:
             return False
+        if scan.get("prefix_changed"):
+            unsafe_change = True
+            break
         try:
             stat = os.stat(current["path"])
         except OSError:
@@ -741,6 +753,7 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
                         "fallback_model": scan["fallback_model"],
                         "project": scan["project"],
                         "processed_size": scan["processed_size"],
+                        "prefix_hash": scan["prefix_hash"],
                     }
 
                 if old_path != current["path"]:
@@ -749,8 +762,8 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
                     """
                     INSERT INTO token_usage_file_state(
                         path, device, inode, processed_size, mtime_ns,
-                        previous_total, fallback_model, project
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        previous_total, fallback_model, project, prefix_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(path) DO UPDATE SET
                         device = excluded.device,
                         inode = excluded.inode,
@@ -758,7 +771,8 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
                         mtime_ns = excluded.mtime_ns,
                         previous_total = excluded.previous_total,
                         fallback_model = excluded.fallback_model,
-                        project = excluded.project
+                        project = excluded.project,
+                        prefix_hash = excluded.prefix_hash
                     """,
                     (
                         current["path"],
@@ -769,6 +783,7 @@ def refresh_token_usage_cache_if_needed(roots=None, force=False):
                         next_state["previous_total"],
                         next_state["fallback_model"],
                         next_state["project"],
+                        next_state["prefix_hash"],
                     ),
                 )
             conn.execute(
