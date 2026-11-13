@@ -257,7 +257,7 @@ def main():
             p = multiprocessing.Process(target=plot.plot_fig)
             p.start()
 
-        @rumps.clicked("设置")
+        @rumps.clicked("Setting")
         def settings_button(self, _):
             if self._settings_window is None:
                 self._settings_window = StatusBarSettingsWindow.alloc().init()
