@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime
+from itertools import combinations
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -77,6 +78,51 @@ class CopyCredentialsTest(unittest.TestCase):
 
 
 class StatusTitleTest(unittest.TestCase):
+    def test_all_visibility_combinations_keep_order_and_reset_details_together(self):
+        now = datetime(2026, 7, 26, 14, 30)
+        storage = Mock()
+        storage.get_activity_seconds_for_date.return_value = list(range(150))
+        storage.get_token_usage_by_date_range.return_value = {"2026-07-26": [250]}
+        expected_parts = ("1.5h", "250", "82%", "2d20h(40%)")
+        for count in range(len(main.STATUS_BAR_FIELDS) + 1):
+            for indices in combinations(range(len(main.STATUS_BAR_FIELDS)), count):
+                fields = [main.STATUS_BAR_FIELDS[index] for index in reversed(indices)]
+                with self.subTest(fields=fields):
+                    self.assertEqual(
+                        main._build_status_title(now, storage, str, lambda _: "82% · 2d20h(40%)", fields),
+                        " · ".join(expected_parts[index] for index in indices),
+                    )
+
+    def test_visibility_changes_reuse_last_snapshot_without_querying_data(self):
+        storage = Mock()
+        storage.get_activity_seconds_for_date.return_value = list(range(100))
+        storage.get_token_usage_by_date_range.return_value = {"2026-07-26": [250]}
+        quota = Mock(return_value="82% · 2d20h(40%)")
+        parts = main._build_status_parts(datetime(2026, 7, 26, 14, 30), storage, str, quota)
+
+        self.assertEqual(main._format_status_title(parts, ("quota_reset",)), "2d20h(40%)")
+        self.assertEqual(main._format_status_title(parts, ()), "")
+        self.assertEqual(main._format_status_title(parts, main.STATUS_BAR_FIELDS), "1.0h · 250 · 82% · 2d20h(40%)")
+        self.assertEqual(storage.get_activity_seconds_for_date.call_count, 1)
+        self.assertEqual(storage.get_token_usage_by_date_range.call_count, 1)
+        quota.assert_called_once()
+
+    def test_quota_failure_placeholders_follow_visibility_settings(self):
+        storage = Mock()
+        storage.get_activity_seconds_for_date.return_value = []
+        storage.get_token_usage_by_date_range.return_value = {}
+        quota = Mock(side_effect=RuntimeError("quota unavailable"))
+        for fields, expected in [
+            (("quota_remaining",), "--%"),
+            (("quota_reset",), "--"),
+            (("quota_remaining", "quota_reset"), "--% · --"),
+        ]:
+            with self.subTest(fields=fields):
+                self.assertEqual(
+                    main._build_status_title(datetime(2026, 7, 26), storage, str, quota, fields),
+                    expected,
+                )
+
     def test_status_title_switches_at_five_and_quota_receives_real_time(self):
         for now, expected_day in [
             (datetime(2026, 1, 1, 4, 59, 59), date(2025, 12, 31)),

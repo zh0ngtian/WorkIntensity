@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 
 from day_boundary import reporting_date
+from storage import STATUS_BAR_FIELDS
 
 _DAEMONIZED_ENV_KEY = "WORKINTENSITY_DAEMONIZED"
 _TOS_CREDENTIALS_PATH = "/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json"
@@ -36,7 +37,7 @@ def _copy_tos_credentials():
         )
 
 
-def _build_status_title(now, storage, format_token_count, get_quota_status):
+def _build_status_parts(now, storage, format_token_count, get_quota_status):
     today = reporting_date(now)
     try:
         today_seconds = storage.get_activity_seconds_for_date(today)
@@ -57,7 +58,24 @@ def _build_status_title(now, storage, format_token_count, get_quota_status):
     except Exception:
         quota_title = "--% · --"
 
-    return f"{work_hours_title} · {token_title} · {quota_title}"
+    quota_remaining, _, quota_reset = quota_title.partition(" · ")
+    return {
+        "work_hours": work_hours_title,
+        "tokens": token_title,
+        "quota_remaining": quota_remaining,
+        "quota_reset": quota_reset,
+    }
+
+
+def _format_status_title(parts, visible_fields):
+    return " · ".join(parts[field] for field in STATUS_BAR_FIELDS if field in visible_fields)
+
+
+def _build_status_title(now, storage, format_token_count, get_quota_status, visible_fields=STATUS_BAR_FIELDS):
+    return _format_status_title(
+        _build_status_parts(now, storage, format_token_count, get_quota_status),
+        visible_fields,
+    )
 
 
 def _show_error_dialog(message):
@@ -142,6 +160,7 @@ def main():
     import plot
     import record
     import storage
+    from settings_window import StatusBarSettingsWindow
 
     STATUS_REFRESH_SECONDS = 10 * 60
     STATUS_TITLE_FONT_SIZE = 14
@@ -149,6 +168,8 @@ def main():
     class WorkIntensityStatusBarApp(rumps.App):
         def __init__(self):
             super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title="0.0h")
+            self._visible_fields = storage.get_status_bar_fields()
+            self._settings_window = None
             self._set_status_bar_symbol_icon()
             self._update_status_title()
             rumps.events.before_start.register(self._update_status_title)
@@ -196,14 +217,22 @@ def main():
                 return
 
         def _update_status_title(self, _=None):
-            title = _build_status_title(
+            self._status_parts = _build_status_parts(
                 datetime.now(),
                 storage,
                 plot.format_token_count,
                 codex_quota.fetch_quota_status,
             )
+            self._apply_status_title()
+
+        def _apply_status_title(self):
+            title = _format_status_title(self._status_parts, self._visible_fields)
             self.title = title
             self._set_status_bar_title_font(title)
+
+        def _on_status_settings_changed(self, fields):
+            self._visible_fields = fields
+            self._apply_status_title()
 
         def _set_status_bar_title_font(self, title):
             try:
@@ -227,6 +256,13 @@ def main():
         def plot_button(self, _):
             p = multiprocessing.Process(target=plot.plot_fig)
             p.start()
+
+        @rumps.clicked("设置")
+        def settings_button(self, _):
+            if self._settings_window is None:
+                self._settings_window = StatusBarSettingsWindow.alloc().init()
+                self._settings_window.configure(storage, self._on_status_settings_changed)
+            self._settings_window.show()
 
     app = WorkIntensityStatusBarApp()
     app.run()

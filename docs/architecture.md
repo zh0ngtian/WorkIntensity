@@ -74,6 +74,14 @@ Every status-title refresh starts `codex app-server`, completes its JSONL initia
 
 This remote plan-limit lookup is separate from token aggregation. No Codex auth token is read or stored by WorkIntensity.
 
+## Status Bar Preferences
+
+The menu's “设置” entry opens a reusable native AppKit window implemented in `settings_window.py`. Four independent checkboxes control work hours, local token totals, remaining Codex quota, and the combined reset countdown/time percentage. All four are visible by default; disabling all four leaves the status icon.
+
+`storage.py` stores these preferences as `status_bar_show_<field>` values in the existing `log/local_settings.sqlite3` database, alongside the chart display preferences. They do not access the activity database or trigger iCloud backup. Each change saves all four values in one transaction; a failed save restores the previous checkbox selection and displays an error.
+
+`main.py` retains the latest status-data snapshot and reapplies visibility immediately after a successful save. Changing checkboxes does not start another quota lookup or local token scan. The existing ten-minute refresh continues to update the snapshot, so re-enabling a field shows the latest collected value.
+
 ## Visualization
 
 The generated HTML has two main charts:

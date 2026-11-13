@@ -10,6 +10,17 @@ python3 main.py
 
 读取压缩的 Codex 历史日志还需要 `zstd`（`brew install zstd`）。
 
+## 状态栏显示设置
+
+点击菜单中的「设置」打开原生设置窗口，可以分别显示或隐藏：
+
+* 今日工作时长
+* 今日 Token 用量
+* Codex 剩余额度百分比
+* 额度重置倒计时与剩余时间百分比（合为一个选项，例如 `2d20h(40%)`）
+
+默认全部显示，顺序与以上列表一致。勾选修改后立即使用最近一次刷新数据更新状态栏，数据仍每 10 分钟刷新；全部取消时仅保留图标。选择自动保存在本机 `log/local_settings.sqlite3`，重启后继续使用，不同步到 iCloud。
+
 ## 复制凭证
 
 点击菜单中的「Copy」，会读取 `/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json` 的 `AK`、`SK`、`TOKEN`，将 `export AK="xxx" && export SK="yyy" && export TOKEN="zzz"` 格式的命令复制到剪贴板。每次点击都会重新读取文件，并转义 shell 特殊字符。发生错误时，剪贴板会改为保存具体报错信息；若错误信息也无法写入剪贴板，则弹窗提示。
@@ -75,7 +86,7 @@ token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite
 
 ```bash
 python3 -m unittest
-python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','codex_quota.py','day_boundary.py']]"
+python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','codex_quota.py','day_boundary.py','settings_window.py']]"
 ```
 
 更多数据流与表结构见 [`docs/architecture.md`](docs/architecture.md)。

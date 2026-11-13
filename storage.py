@@ -30,6 +30,8 @@ _TOKEN_USAGE_TOTALS_CHECKSUM_KEY = "token_usage_totals_checksum"
 _TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
 _TOKEN_RANGE_START_SETTING_KEY = "token_range_start"
 _TOKEN_RANGE_END_SETTING_KEY = "token_range_end"
+STATUS_BAR_FIELDS = ("work_hours", "tokens", "quota_remaining", "quota_reset")
+_STATUS_BAR_SETTING_PREFIX = "status_bar_show_"
 
 
 def _ensure_log_dir():
@@ -251,6 +253,26 @@ def _store_local_settings(values):
             conn.commit()
         finally:
             conn.close()
+
+
+def get_status_bar_fields():
+    settings = _load_local_settings()
+    return tuple(
+        field for field in STATUS_BAR_FIELDS
+        if settings.get(_STATUS_BAR_SETTING_PREFIX + field, "1") != "0"
+    )
+
+
+def set_status_bar_fields(fields):
+    fields = set(fields)
+    if fields.difference(STATUS_BAR_FIELDS):
+        raise ValueError("未知的状态栏显示选项")
+    selected = tuple(field for field in STATUS_BAR_FIELDS if field in fields)
+    _store_local_settings({
+        _STATUS_BAR_SETTING_PREFIX + field: int(field in fields)
+        for field in STATUS_BAR_FIELDS
+    })
+    return selected
 
 
 def get_token_scale_strength(default=0):
