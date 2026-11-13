@@ -33,6 +33,13 @@ class StatusBarSettingsTest(unittest.TestCase):
             storage.set_status_bar_fields(["work_hours", "unknown"])
         self.assertEqual(storage.get_status_bar_fields(), ("tokens",))
 
+    def test_icloud_sync_defaults_to_disabled_and_persists_changes(self):
+        self.assertFalse(storage.get_icloud_sync_enabled())
+        self.assertTrue(storage.set_icloud_sync_enabled(True))
+        self.assertTrue(storage.get_icloud_sync_enabled())
+        self.assertFalse(storage.set_icloud_sync_enabled(False))
+        self.assertFalse(storage.get_icloud_sync_enabled())
+
     def test_settings_use_only_local_database_and_preserve_other_preferences(self):
         with (
             patch.object(storage, "get_connection", side_effect=AssertionError("unexpected activity database access")),
@@ -40,8 +47,10 @@ class StatusBarSettingsTest(unittest.TestCase):
         ):
             storage.set_token_display_range(20, 80)
             storage.set_status_bar_fields(["tokens"])
+            storage.set_icloud_sync_enabled(True)
             self.assertEqual(storage.get_status_bar_fields(), ("tokens",))
             self.assertEqual(storage.get_token_display_range(), (20, 80))
+            self.assertTrue(storage.get_icloud_sync_enabled())
         self.assertIsNone(storage._DB_CONN)
 
 

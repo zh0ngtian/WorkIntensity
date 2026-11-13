@@ -647,6 +647,7 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
         self.assertEqual(usage[replay_day][replay_hour], 0)
 
     def test_icloud_backup_failure_does_not_raise(self):
+        storage.set_icloud_sync_enabled(True)
         storage.get_connection()
         icloud_root = Path(self.tmp.name) / "icloud"
         icloud_backup_dir = icloud_root / "WorkIntensity"

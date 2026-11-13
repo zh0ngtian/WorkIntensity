@@ -30,6 +30,7 @@ _TOKEN_USAGE_TOTALS_CHECKSUM_KEY = "token_usage_totals_checksum"
 _TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
 _TOKEN_RANGE_START_SETTING_KEY = "token_range_start"
 _TOKEN_RANGE_END_SETTING_KEY = "token_range_end"
+_ICLOUD_SYNC_ENABLED_SETTING_KEY = "icloud_sync_enabled"
 STATUS_BAR_FIELDS = ("work_hours", "tokens", "quota_remaining", "quota_reset")
 _STATUS_BAR_SETTING_PREFIX = "status_bar_show_"
 
@@ -273,6 +274,16 @@ def set_status_bar_fields(fields):
         for field in STATUS_BAR_FIELDS
     })
     return selected
+
+
+def get_icloud_sync_enabled():
+    return _load_local_settings().get(_ICLOUD_SYNC_ENABLED_SETTING_KEY) == "1"
+
+
+def set_icloud_sync_enabled(enabled):
+    enabled = bool(enabled)
+    _store_local_settings({_ICLOUD_SYNC_ENABLED_SETTING_KEY: int(enabled)})
+    return enabled
 
 
 def get_token_scale_strength(default=0):
@@ -927,6 +938,8 @@ def optimize_database():
 
 
 def _restore_from_icloud_if_needed():
+    if not get_icloud_sync_enabled():
+        return False
     if os.path.exists(_DB_PATH):
         return False
     if not os.path.exists(_ICLOUD_DB_PATH):
@@ -948,6 +961,8 @@ def _restore_from_icloud_if_needed():
 
 def sync_to_icloud(force=False):
     global _LAST_ICLOUD_BACKUP_AT
+    if not get_icloud_sync_enabled():
+        return False
     if not _ensure_icloud_backup_dir():
         return False
     if not os.access(_ICLOUD_BACKUP_DIR, os.W_OK):

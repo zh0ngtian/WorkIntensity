@@ -99,10 +99,12 @@ The HTML uses ECharts from jsDelivr, so chart rendering needs network access unl
 
 ## Backup
 
-If iCloud Drive is available, `storage.py` backs up the SQLite database to:
+The settings window also includes an iCloud sync checkbox, disabled by default. `storage.py` stores `icloud_sync_enabled` in the local-only preferences database. Every backup and restore attempt reads this preference, so changes apply to the recorder and plot processes without restarting them. Saving the preference does not itself trigger a backup; enabling it allows the existing activity/cache writes and shutdown backup to run, with the existing hourly interval for automatic backups.
+
+When sync is enabled and iCloud Drive is available, `storage.py` backs up the SQLite database to:
 
 ```text
 ~/Library/Mobile Documents/com~apple~CloudDocs/WorkIntensity/work_intensity.sqlite3
 ```
 
-When the local database is missing and the iCloud backup exists, the app restores from the backup before opening the database.
+When sync is enabled, the local database is missing, and the iCloud backup exists, the app restores from the backup before opening the database. Disabled sync skips backup (including forced backups) and restore without accessing iCloud paths. Existing backups are retained.

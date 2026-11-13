@@ -21,6 +21,8 @@ python3 main.py
 
 默认全部显示，顺序与以上列表一致。勾选修改后立即使用最近一次刷新数据更新状态栏，数据仍每 10 分钟刷新；全部取消时仅保留图标。选择自动保存在本机 `log/local_settings.sqlite3`，重启后继续使用，不同步到 iCloud。
 
+设置窗口还提供「启用 iCloud 云同步」开关，默认关闭，修改后立即生效，重启后保留选择。关闭时不执行 iCloud 备份或恢复；开启后使用原有的自动备份与恢复逻辑。
+
 ## 复制凭证
 
 点击菜单中的「Copy」，会读取 `/Users/bytedance/WorkSpace/amd_gpu_monitor/.data/tos-credentials.json` 的 `AK`、`SK`、`TOKEN`，将 `export AK="xxx" && export SK="yyy" && export TOKEN="zzz"` 格式的命令复制到剪贴板。每次点击都会重新读取文件，并转义 shell 特殊字符。发生错误时，剪贴板会改为保存具体报错信息；若错误信息也无法写入剪贴板，则弹窗提示。
@@ -67,8 +69,9 @@ python3 main.py
 
 程序使用 SQLite 存储活动数据，本地数据库文件位于 `log/work_intensity.sqlite3`。
 
-* 如果开启了 iCloud Drive，会自动备份到 `~/Library/Mobile Documents/com~apple~CloudDocs/WorkIntensity/work_intensity.sqlite3`
-* 当本地数据库缺失且 iCloud 备份存在时，程序会自动从 iCloud 恢复
+* 云同步默认关闭，需在「Setting」中开启「启用 iCloud 云同步」
+* 开关开启且 iCloud Drive 可用时，会自动备份到 `~/Library/Mobile Documents/com~apple~CloudDocs/WorkIntensity/work_intensity.sqlite3`
+* 开关开启、本地数据库缺失且 iCloud 备份存在时，程序会自动从 iCloud 恢复
 
 活动记录保留原始自然日和 36 秒时间块，查询时合并当天 05:00 后与次日 05:00 前的数据；历史活动和旧日志无需修改。
 

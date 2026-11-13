@@ -1,4 +1,4 @@
-"""Native macOS preferences for status bar visibility."""
+"""Native macOS preferences for status bar visibility and iCloud sync."""
 
 import AppKit
 import objc
@@ -19,8 +19,9 @@ class StatusBarSettingsWindow(AppKit.NSObject):
         self._on_change = on_change
         self._checkboxes = {}
         self._selected_fields = ()
+        self._icloud_sync_enabled = False
         self._window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (520, 350)),
+            ((0, 0), (520, 480)),
             AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable,
             AppKit.NSBackingStoreBuffered,
             False,
@@ -30,13 +31,13 @@ class StatusBarSettingsWindow(AppKit.NSObject):
         self._window.center()
         content = self._window.contentView()
 
-        heading = self._label("状态栏显示内容", (28, 297, 464, 26), 17)
+        heading = self._label("状态栏显示内容", (28, 427, 464, 26), 17)
         heading.setFont_(AppKit.NSFont.boldSystemFontOfSize_(17))
         content.addSubview_(heading)
-        content.addSubview_(self._label("选择需要显示的内容，修改后立即生效。", (28, 269, 464, 22), 13, True))
+        content.addSubview_(self._label("选择需要显示的内容，修改后立即生效。", (28, 399, 464, 22), 13, True))
 
         for index, (field, title, example) in enumerate(_FIELD_ROWS):
-            y = 218 - index * 38
+            y = 348 - index * 38
             checkbox = AppKit.NSButton.checkboxWithTitle_target_action_(title, self, "toggleField:")
             checkbox.setFrame_(((28, y), (330, 26)))
             checkbox.setFont_(AppKit.NSFont.systemFontOfSize_(13))
@@ -46,7 +47,18 @@ class StatusBarSettingsWindow(AppKit.NSObject):
             example_label.setAlignment_(AppKit.NSTextAlignmentRight)
             content.addSubview_(example_label)
 
-        content.addSubview_(self._label("设置自动保存在本机，全部取消时仅显示状态栏图标。", (28, 38, 464, 22), 12, True))
+        content.addSubview_(self._label("设置自动保存在本机，全部取消时仅显示状态栏图标。", (28, 168, 464, 22), 12, True))
+
+        sync_heading = self._label("云同步", (28, 112, 464, 26), 17)
+        sync_heading.setFont_(AppKit.NSFont.boldSystemFontOfSize_(17))
+        content.addSubview_(sync_heading)
+        self._icloud_sync_checkbox = AppKit.NSButton.checkboxWithTitle_target_action_(
+            "启用 iCloud 云同步", self, "toggleICloudSync:"
+        )
+        self._icloud_sync_checkbox.setFrame_(((28, 78), (464, 26)))
+        self._icloud_sync_checkbox.setFont_(AppKit.NSFont.systemFontOfSize_(13))
+        content.addSubview_(self._icloud_sync_checkbox)
+        content.addSubview_(self._label("默认关闭。开启后自动备份，本地数据缺失时从 iCloud 恢复。", (28, 38, 464, 22), 12, True))
 
     @objc.python_method
     def _label(self, text, frame, size, secondary=False):
@@ -65,9 +77,17 @@ class StatusBarSettingsWindow(AppKit.NSObject):
             checkbox.setState_(AppKit.NSControlStateValueOn if field in fields else AppKit.NSControlStateValueOff)
 
     @objc.python_method
+    def _set_icloud_sync_enabled(self, enabled):
+        self._icloud_sync_enabled = enabled
+        self._icloud_sync_checkbox.setState_(
+            AppKit.NSControlStateValueOn if enabled else AppKit.NSControlStateValueOff
+        )
+
+    @objc.python_method
     def show(self):
         try:
             self._set_selected_fields(self._storage.get_status_bar_fields())
+            self._set_icloud_sync_enabled(self._storage.get_icloud_sync_enabled())
         except Exception as error:
             self._show_error("无法读取设置", error)
             return
@@ -87,6 +107,16 @@ class StatusBarSettingsWindow(AppKit.NSObject):
             return
         self._set_selected_fields(saved_fields)
         self._on_change(saved_fields)
+
+    def toggleICloudSync_(self, sender):
+        enabled = sender.state() == AppKit.NSControlStateValueOn
+        try:
+            saved_enabled = self._storage.set_icloud_sync_enabled(enabled)
+        except Exception as error:
+            self._set_icloud_sync_enabled(self._icloud_sync_enabled)
+            self._show_error("无法保存设置", error)
+            return
+        self._set_icloud_sync_enabled(saved_enabled)
 
     @objc.python_method
     def _show_error(self, title, error):
