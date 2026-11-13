@@ -10,7 +10,9 @@ from pathlib import Path
 
 _INITIALIZE_REQUEST_ID = 0
 _RATE_LIMITS_REQUEST_ID = 1
-_CHATGPT_CODEX_EXECUTABLE = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+_CHATGPT_CODEX_EXECUTABLE = Path(
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+)
 _QUOTA_WINDOW_HOURS = 7 * 24
 _last_known_rate_limit = None
 
