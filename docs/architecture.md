@@ -74,11 +74,21 @@ Every status-title refresh starts `codex app-server`, completes its JSONL initia
 
 This remote plan-limit lookup is separate from token aggregation. No Codex auth token is read or stored by WorkIntensity.
 
+## Live TPS
+
+`codex_tps.py` connects to the desktop's existing local backend using a Unix WebSocket at `~/.codex/app-server-control/app-server-control.sock`, discovers loaded threads every five seconds, and joins them through metadata-only `thread/resume` without configuration overrides or starting turns. It does not start an independent backend. A background listener processes connection work and usage events; a separate five-second UI timer reads snapshots and updates the total and each conversation's menu row. The timer uses AppKit common run-loop modes so an open menu continues updating.
+
+`TpsTracker` keeps recent usage samples in memory using a monotonic clock. Each conversation has its own baseline from `thread/tokenUsage/updated.total.outputTokens`; subsequent positive differences enter a five-second rate window at arrival time and are divided by five. These rates receive exponential smoothing with a five-second time constant. The response to each sample's five-second pulse is evaluated analytically, including the decay after the raw window expires, so UI read frequency and listener delays do not alter the result. Insignificant expired samples are pruned; per-conversation rates below 0.05 TPS display as zero. Output includes visible replies, reasoning and generated tool calls. Reasoning is already part of `outputTokens` and is never added again. Input/cache tokens, tool results and streamed text events do not add to the count. No tokenizer is required, and text delta notifications are opted out.
+
+The first usage update establishes a baseline, including after reconnect, so historical usage is not reported as current output. Duplicate cumulative values do not count or restart smoothing; a lower cumulative counter establishes a new baseline without producing negative output. Batch reporting and smoothing both introduce latency. Displayed rates rise and fall gradually, measuring recently reported output rather than instantaneous token generation.
+
+The total equals the sum of displayed conversations' smoothed rates. Executing conversations remain listed when their rates reach zero; completed conversations remain until their smoothed tails reach zero. Disconnects immediately clear samples and show `-- TPS`; reconnection rediscovers loaded threads. Closing the observer connection does not stop the desktop daemon. These windows never enter the daily token cache or activity database.
+
 ## Status Bar Preferences
 
-The menu's “Setting” entry opens a reusable native AppKit window implemented in `settings_window.py`. Four independent checkboxes control work hours, local token totals, remaining Codex quota, and the combined reset countdown/time percentage. All four are visible by default; disabling all four leaves the status icon.
+The menu's “Setting” entry opens a reusable native AppKit window implemented in `settings_window.py`. Five independent checkboxes control work hours, local token totals, remaining Codex quota, the combined reset countdown/time percentage, and total live TPS. All five are visible by default; disabling all five leaves the status icon.
 
-`storage.py` stores these preferences as `status_bar_show_<field>` values in the existing `log/local_settings.sqlite3` database, alongside the chart display preferences. They do not access the activity database or trigger iCloud backup. Each change saves all four values in one transaction; a failed save restores the previous checkbox selection and displays an error.
+`storage.py` stores these preferences as `status_bar_show_<field>` values in the existing `log/local_settings.sqlite3` database, alongside the chart display preferences. They do not access the activity database or trigger iCloud backup. Each change saves all five values in one transaction; a failed save restores the previous checkbox selection and displays an error.
 
 `main.py` retains the latest status-data snapshot and reapplies visibility immediately after a successful save. Changing checkboxes does not start another quota lookup or local token scan. The existing ten-minute refresh continues to update the snapshot, so re-enabling a field shows the latest collected value.
 

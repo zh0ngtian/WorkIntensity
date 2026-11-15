@@ -78,12 +78,22 @@ class CopyCredentialsTest(unittest.TestCase):
 
 
 class StatusTitleTest(unittest.TestCase):
+    def test_tps_menu_distinguishes_idle_disconnected_and_duplicate_thread_titles(self):
+        self.assertEqual(main._tps_menu_rows({"connected": False}), [("tps_empty", "未连接桌面 Codex")])
+        self.assertEqual(main._tps_menu_rows({"connected": True, "threads": []}), [("tps_empty", "暂无活跃对话")])
+        rows = main._tps_menu_rows({"connected": True, "threads": [
+            {"id": "thread-111111", "title": "Same title", "tps": 10},
+            {"id": "thread-222222", "title": "Same title", "tps": 0},
+        ]})
+        self.assertNotEqual(rows[0][0], rows[1][0])
+        self.assertEqual(rows[1][1], "Same title [222222] · 0.0 TPS")
+
     def test_all_visibility_combinations_keep_order_and_reset_details_together(self):
         now = datetime(2026, 7, 26, 14, 30)
         storage = Mock()
         storage.get_activity_seconds_for_date.return_value = list(range(150))
         storage.get_token_usage_by_date_range.return_value = {"2026-07-26": [250]}
-        expected_parts = ("1.5h", "250", "82%", "2d20h(40%)")
+        expected_parts = ("1.5h", "250", "82%", "2d20h(40%)", "-- TPS")
         for count in range(len(main.STATUS_BAR_FIELDS) + 1):
             for indices in combinations(range(len(main.STATUS_BAR_FIELDS)), count):
                 fields = [main.STATUS_BAR_FIELDS[index] for index in reversed(indices)]
@@ -102,7 +112,7 @@ class StatusTitleTest(unittest.TestCase):
 
         self.assertEqual(main._format_status_title(parts, ("quota_reset",)), "2d20h(40%)")
         self.assertEqual(main._format_status_title(parts, ()), "")
-        self.assertEqual(main._format_status_title(parts, main.STATUS_BAR_FIELDS), "1.0h · 250 · 82% · 2d20h(40%)")
+        self.assertEqual(main._format_status_title(parts, main.STATUS_BAR_FIELDS), "1.0h · 250 · 82% · 2d20h(40%) · -- TPS")
         self.assertEqual(storage.get_activity_seconds_for_date.call_count, 1)
         self.assertEqual(storage.get_token_usage_by_date_range.call_count, 1)
         quota.assert_called_once()
@@ -134,7 +144,7 @@ class StatusTitleTest(unittest.TestCase):
                 storage.get_token_usage_by_date_range.return_value = {str(expected_day): [250]}
                 quota = Mock(return_value="82% · 7d12h")
 
-                self.assertEqual(main._build_status_title(now, storage, str, quota), "1.0h · 250 · 82% · 7d12h")
+                self.assertEqual(main._build_status_title(now, storage, str, quota), "1.0h · 250 · 82% · 7d12h · -- TPS")
                 storage.get_activity_seconds_for_date.assert_called_once_with(expected_day)
                 storage.get_token_usage_by_date_range.assert_called_once_with(expected_day, expected_day)
                 quota.assert_called_once_with(now)
@@ -158,7 +168,7 @@ class StatusTitleTest(unittest.TestCase):
             lambda _now: "82% · 7d12h",
         )
 
-        self.assertEqual(title, "3.2h · 1.2K · 82% · 7d12h")
+        self.assertEqual(title, "3.2h · 1.2K · 82% · 7d12h · -- TPS")
 
     def test_status_title_keeps_available_metric_when_the_other_fails(self):
         now = datetime(2026, 7, 26, 14, 30)
@@ -183,11 +193,11 @@ class StatusTitleTest(unittest.TestCase):
 
         self.assertEqual(
             main._build_status_title(now, ActivityUnavailableStorage, str, lambda _now: "82% · 7d12h"),
-            "--h · 250 · 82% · 7d12h",
+            "--h · 250 · 82% · 7d12h · -- TPS",
         )
         self.assertEqual(
             main._build_status_title(now, TokenUnavailableStorage, str, lambda _now: "82% · 7d12h"),
-            "1.5h · -- · 82% · 7d12h",
+            "1.5h · -- · 82% · 7d12h · -- TPS",
         )
 
     def test_status_title_keeps_local_metrics_when_quota_fails(self):
@@ -207,7 +217,7 @@ class StatusTitleTest(unittest.TestCase):
 
         self.assertEqual(
             main._build_status_title(now, Storage, str, quota_unavailable),
-            "1.5h · 250 · --% · --",
+            "1.5h · 250 · --% · -- · -- TPS",
         )
 
 

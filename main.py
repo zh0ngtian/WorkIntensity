@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import datetime
 
+from codex_tps import format_tps
 from day_boundary import reporting_date
 from storage import STATUS_BAR_FIELDS
 
@@ -64,11 +65,24 @@ def _build_status_parts(now, storage, format_token_count, get_quota_status):
         "tokens": token_title,
         "quota_remaining": quota_remaining,
         "quota_reset": quota_reset,
+        "tps": format_tps(None),
     }
 
 
 def _format_status_title(parts, visible_fields):
     return " · ".join(parts[field] for field in STATUS_BAR_FIELDS if field in visible_fields)
+
+
+def _tps_menu_rows(snapshot):
+    if not snapshot["connected"]:
+        return [("tps_empty", "未连接桌面 Codex")]
+    rows = snapshot["threads"]
+    if not rows:
+        return [("tps_empty", "暂无活跃对话")]
+    return [
+        ("tps_" + row["id"], f'{row["title"]} [{row["id"][-6:]}] · {format_tps(row["tps"])}')
+        for row in rows
+    ]
 
 
 def _build_status_title(now, storage, format_token_count, get_quota_status, visible_fields=STATUS_BAR_FIELDS):
@@ -157,6 +171,7 @@ def main():
     import rumps
 
     import codex_quota
+    from codex_tps import CodexTpsMonitor
     import plot
     import record
     import storage
@@ -170,11 +185,24 @@ def main():
             super(WorkIntensityStatusBarApp, self).__init__("WorkIntensity", title="0.0h")
             self._visible_fields = storage.get_status_bar_fields()
             self._settings_window = None
+            self._tps_monitor = CodexTpsMonitor()
+            self._tps_snapshot = self._tps_monitor.snapshot()
+            self._tps_menu_items = {}
+            self.menu["tps_separator"] = None
             self._set_status_bar_symbol_icon()
             self._update_status_title()
             rumps.events.before_start.register(self._update_status_title)
             self._status_refresh_timer = rumps.Timer(self._update_status_title, STATUS_REFRESH_SECONDS)
             self._status_refresh_timer.start()
+
+            self._tps_monitor.start()
+            self._tps_refresh_timer = rumps.Timer(self._update_tps, 5)
+            self._tps_refresh_timer.start()
+            # Keep the timer running while AppKit tracks an open status menu.
+            from Foundation import NSRunLoop, NSRunLoopCommonModes
+            NSRunLoop.mainRunLoop().addTimer_forMode_(self._tps_refresh_timer._nstimer, NSRunLoopCommonModes)
+            rumps.events.before_quit.register(self._stop_tps)
+            self._update_tps()
 
             self.recorder = record.InputRecorder()
             self.recorder.start()
@@ -226,9 +254,29 @@ def main():
             self._apply_status_title()
 
         def _apply_status_title(self):
+            self._status_parts["tps"] = format_tps(self._tps_snapshot["total_tps"])
             title = _format_status_title(self._status_parts, self._visible_fields)
             self.title = title
             self._set_status_bar_title_font(title)
+
+        def _update_tps(self, _=None):
+            self._tps_snapshot = self._tps_monitor.snapshot()
+            self._apply_status_title()
+            rows = _tps_menu_rows(self._tps_snapshot)
+            if list(self._tps_menu_items) != [key for key, _ in rows]:
+                for key in self._tps_menu_items:
+                    del self.menu[key]
+                self._tps_menu_items = {}
+                for key, _ in rows:
+                    item = rumps.MenuItem(key)
+                    self.menu.insert_before("tps_separator", item)
+                    self._tps_menu_items[key] = item
+            for key, title in rows:
+                self._tps_menu_items[key].title = title
+
+        def _stop_tps(self):
+            self._tps_refresh_timer.stop()
+            self._tps_monitor.stop()
 
         def _on_status_settings_changed(self, fields):
             self._visible_fields = fields

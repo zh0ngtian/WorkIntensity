@@ -9,6 +9,7 @@ _FIELD_ROWS = (
     ("tokens", "今日 Token 用量", "1.2K"),
     ("quota_remaining", "Codex 剩余额度百分比", "82%"),
     ("quota_reset", "额度重置倒计时与剩余时间百分比", "2d20h(40%)"),
+    ("tps", "Codex 总输出 TPS", "32.0 TPS"),
 )
 
 

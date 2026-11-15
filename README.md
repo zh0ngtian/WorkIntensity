@@ -3,7 +3,7 @@
 ## 运行方法（仅可用于 macOS）
 
 ```bash
-pip3 install rumps pynput chinese-calendar pyobjc-framework-Quartz pyobjc-framework-ApplicationServices pyobjc-framework-Cocoa
+pip3 install rumps pynput chinese-calendar pyobjc-framework-Quartz pyobjc-framework-ApplicationServices pyobjc-framework-Cocoa "websockets>=17,<18"
 
 python3 main.py
 ```
@@ -18,8 +18,9 @@ python3 main.py
 * 今日 Token 用量
 * Codex 剩余额度百分比
 * 额度重置倒计时与剩余时间百分比（合为一个选项，例如 `2d20h(40%)`）
+* Codex 总输出 TPS（例如 `32.0 TPS`）
 
-默认全部显示，顺序与以上列表一致。勾选修改后立即使用最近一次刷新数据更新状态栏，数据仍每 10 分钟刷新；全部取消时仅保留图标。选择自动保存在本机 `log/local_settings.sqlite3`，重启后继续使用，不同步到 iCloud。
+默认全部显示，顺序与以上列表一致。勾选修改后立即使用最近一次刷新数据更新状态栏。TPS 每 5 秒刷新，其余数据每 10 分钟刷新；全部取消时仅保留图标。选择自动保存在本机 `log/local_settings.sqlite3`，重启后继续使用，不同步到 iCloud。
 
 设置窗口还提供「启用 iCloud 云同步」开关，默认关闭，修改后立即生效，重启后保留选择。关闭时不执行 iCloud 备份或恢复；开启后使用原有的自动备份与恢复逻辑。
 
@@ -85,11 +86,21 @@ token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite
 
 该功能要求已使用 ChatGPT 账号登录 Codex。程序优先使用 PATH 中的 `codex` 命令，否则使用 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex` 中客户端自带的命令。套餐余量读取不改变每日 token 用量的本地统计方式。
 
+## Codex 实时 TPS
+
+状态栏显示全部活跃对话的总输出 TPS，点击菜单可直接查看各对话的标题、ID 后缀与 TPS。TPS 每 5 秒刷新，先按最近 5 秒收到的输出 token 增量除以 5 计算基础速率，再做时间常数为 5 秒的指数平滑；菜单展开时也持续更新。批量上报后数值逐步上升，事件间隙平缓下降，低于 0.05 TPS 时显示 0。总 TPS 等于各对话平滑速率之和；结束的对话在平滑速率归零后移出列表。
+
+`codex_tps.py` 通过本机 Unix WebSocket 控制 socket 连接桌面已经运行的共享后端（默认 `~/.codex/app-server-control/app-server-control.sock`），每 5 秒发现已加载对话，再通过不带配置覆盖的 `thread/resume` 加入事件订阅。它不会启动新的模型任务或独立后端，也不读取历史对话正文。需要桌面已有可连接的共享控制 socket；未连接时显示 `-- TPS` 并自动重连，已连接但没有输出时显示 `0.0 TPS`。
+
+实时计数读取本地 `thread/tokenUsage/updated` 的累计 `total.outputTokens`，按对话分别计算增量，包含回复文字、推理以及模型生成的工具调用。`reasoningOutputTokens` 已包含在输出总量中，不再另加；输入、缓存和工具返回内容不计入。无需 tokenizer，也不对正文流重复计数。
+
+首次收到用量事件只建立基线，后续才计入新增输出，避免将历史用量算入当前速度；重连后同样重新建立基线。重复事件不会增加用量或重新开始平滑；累计计数下降时重新建立基线。用量批量上报和平滑都会带来显示延迟；这里显示的是近期收到用量的平滑速率，而非逐 token 的即时生成速度。断开连接立即清空平滑数据。实时窗口仅保存在内存中，与每日 JSONL token 统计、SQLite 缓存及 iCloud 备份独立。
+
 ## 开发验证
 
 ```bash
 python3 -m unittest
-python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','codex_quota.py','day_boundary.py','settings_window.py']]"
+python3 -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['main.py','record.py','storage.py','plot.py','token_usage.py','codex_quota.py','codex_tps.py','day_boundary.py','settings_window.py']]"
 ```
 
 更多数据流与表结构见 [`docs/architecture.md`](docs/architecture.md)。

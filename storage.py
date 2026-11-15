@@ -31,7 +31,7 @@ _TOKEN_SCALE_STRENGTH_SETTING_KEY = "token_scale_strength"
 _TOKEN_RANGE_START_SETTING_KEY = "token_range_start"
 _TOKEN_RANGE_END_SETTING_KEY = "token_range_end"
 _ICLOUD_SYNC_ENABLED_SETTING_KEY = "icloud_sync_enabled"
-STATUS_BAR_FIELDS = ("work_hours", "tokens", "quota_remaining", "quota_reset")
+STATUS_BAR_FIELDS = ("work_hours", "tokens", "quota_remaining", "quota_reset", "tps")
 _STATUS_BAR_SETTING_PREFIX = "status_bar_show_"
 
 
