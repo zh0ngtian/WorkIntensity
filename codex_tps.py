@@ -38,11 +38,13 @@ class TpsTracker:
             title = " ".join((thread.get("name") or thread.get("preview") or thread["id"]).split())
             state["title"] = title[:48] + ("…" if len(title) > 48 else "")
             state["active"] = thread.get("status", {}).get("type") == "active"
+            state["parent_id"] = thread.get("parentThreadId")
+            state["metadata_loaded"] = True
 
     def _state(self, thread_id):
         return self._threads.setdefault(thread_id, {
             "title": thread_id, "active": False, "samples": deque(),
-            "usage_total": None,
+            "usage_total": None, "parent_id": None, "metadata_loaded": False,
         })
 
     def handle(self, message):
@@ -50,6 +52,9 @@ class TpsTracker:
         if "id" in message:
             return
         method, params = message.get("method"), message.get("params", {})
+        if method == "thread/started":
+            self.update_thread(params["thread"])
+            return
         thread_id = params.get("threadId")
         if not thread_id:
             return
@@ -101,22 +106,55 @@ class TpsTracker:
 
     def retain_threads(self, loaded):
         with self._lock:
+            needed = set(loaded) | {tid for tid, state in self._threads.items() if state["samples"]}
+            # Keep ancestor metadata while a descendant is loaded or fading out.
+            for thread_id in list(needed):
+                while thread_id in self._threads:
+                    parent = self._threads[thread_id]["parent_id"]
+                    if not parent or parent in needed:
+                        break
+                    needed.add(parent)
+                    thread_id = parent
             for thread_id, state in list(self._threads.items()):
                 if thread_id not in loaded:
                     state["active"] = False
-                    if not state["samples"]:
-                        del self._threads[thread_id]
+                if thread_id not in needed:
+                    del self._threads[thread_id]
+
+    def missing_parent_ids(self):
+        with self._lock:
+            return {state["parent_id"] for state in self._threads.values()
+                    if state["parent_id"] and not self._threads.get(state["parent_id"], {}).get("metadata_loaded")}
+
+    def _root_thread_id(self, thread_id):
+        seen = set()
+        while thread_id in self._threads:
+            seen.add(thread_id)
+            parent = self._threads[thread_id]["parent_id"]
+            if not parent or parent in seen:
+                break
+            thread_id = parent
+        return thread_id
 
     def snapshot(self):
         with self._lock:
             now = self._clock()
-            rows = []
+            groups = {}
             for thread_id, state in self._threads.items():
-                rate = sum(self._sample_tps(sample, now) for sample in state["samples"])
+                root = self._root_thread_id(thread_id)
+                group = groups.setdefault(root, {
+                    "id": root, "title": self._threads.get(root, {}).get("title", root),
+                    "tps": 0.0, "active": False,
+                })
+                group["tps"] += sum(self._sample_tps(sample, now) for sample in state["samples"])
+                group["active"] |= state["active"]
+            rows = []
+            for group in groups.values():
+                rate = group["tps"]
                 if rate < ZERO_TPS:
                     rate = 0.0
-                if state["active"] or rate:
-                    rows.append({"id": thread_id, "title": state["title"], "tps": rate})
+                if group["active"] or rate:
+                    rows.append({"id": group["id"], "title": group["title"], "tps": rate})
             rows.sort(key=lambda row: (row["title"], row["id"]))
             return {"connected": self.connected,
                     "total_tps": sum(row["tps"] for row in rows) if self.connected else None,
@@ -233,6 +271,13 @@ class CodexTpsMonitor:
                     if "error" not in response:
                         self._tracker.update_thread(response["result"]["thread"])
                         subscribed.add(thread_id)
+                attempted = set()
+                while parents := self._tracker.missing_parent_ids() - attempted:
+                    for parent in sorted(parents):
+                        attempted.add(parent)
+                        response = self._rpc("thread/read", {"threadId": parent, "includeTurns": False})
+                        if "error" not in response:
+                            self._tracker.update_thread(response["result"]["thread"])
                 self._tracker.connected = True
                 self.error = None
                 next_discovery = time.monotonic() + 5

@@ -145,6 +145,108 @@ class TpsTrackerTest(unittest.TestCase):
         self.assertEqual(format_tps(32.36), "32.4 TPS")
 
 
+class SubagentTpsTest(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.tracker = TpsTracker(clock=lambda: self.now, smoothing_seconds=0)
+        self.tracker.reset(connected=True)
+
+    def thread(self, tid, parent=None, active=False, **metadata):
+        self.tracker.update_thread({"id": tid, "name": "Chat " + tid, "parentThreadId": parent,
+                                    "status": {"type": "active" if active else "idle"}, **metadata})
+
+    def usage(self, tid, total):
+        self.tracker.handle({"method": "thread/tokenUsage/updated", "params": {
+            "threadId": tid, "tokenUsage": {"total": {"outputTokens": total}},
+        }})
+
+    def test_nested_subagents_merge_into_root_without_changing_total(self):
+        for tid, parent, output in (("a", None, 10), ("b", "a", 20), ("c", "b", 30),
+                                    ("d", None, 25), ("e", "a", 15)):
+            self.thread(tid, parent)
+            self.usage(tid, 100)
+            self.usage(tid, 100 + output)
+        snapshot = self.tracker.snapshot()
+        self.assertEqual(snapshot["threads"], [
+            {"id": "a", "title": "Chat a", "tps": 15},
+            {"id": "d", "title": "Chat d", "tps": 5},
+        ])
+        self.assertEqual(snapshot["total_tps"], 20)
+
+    def test_parent_stays_visible_while_only_child_is_active(self):
+        self.thread("root")
+        self.thread("child", "root", active=True)
+        self.tracker.handle({"method": "turn/completed", "params": {"threadId": "root"}})
+        self.assertEqual(self.tracker.snapshot()["threads"], [{"id": "root", "title": "Chat root", "tps": 0}])
+        self.tracker.handle({"method": "turn/completed", "params": {"threadId": "child"}})
+        self.assertEqual(self.tracker.snapshot()["threads"], [])
+
+    def test_metadata_regroups_existing_samples_without_recounting(self):
+        self.thread("root")
+        self.usage("child", 100)
+        self.usage("child", 120)
+        self.thread("child", "root")
+        self.usage("child", 120)  # duplicate after metadata arrival
+        self.assertEqual(self.tracker.snapshot()["threads"], [{"id": "root", "title": "Chat root", "tps": 4}])
+        self.usage("root", 100)
+        self.usage("root", 120)  # independent counters, even with identical values
+        self.assertEqual(self.tracker.snapshot()["total_tps"], 8)
+
+    def test_normal_forks_are_separate_conversations(self):
+        self.thread("root", active=True)
+        self.thread("fork", active=True, forkedFromId="root")
+        self.assertEqual([r["id"] for r in self.tracker.snapshot()["threads"]], ["fork", "root"])
+
+    def test_ancestor_metadata_survives_unload_while_descendant_remains(self):
+        self.thread("root")
+        self.thread("middle", "root")
+        self.thread("child", "middle")
+        self.usage("child", 0)
+        self.usage("child", 50)
+        self.tracker.retain_threads({"child"})
+        self.assertEqual(self.tracker.snapshot()["threads"], [{"id": "root", "title": "Chat root", "tps": 10}])
+        self.tracker.retain_threads(set())
+        self.assertEqual(self.tracker.snapshot()["threads"][0]["id"], "root")
+        self.now = 5
+        self.tracker.flush()
+        self.tracker.retain_threads(set())
+        self.assertEqual(self.tracker.snapshot()["threads"], [])
+        self.assertEqual(self.tracker.missing_parent_ids(), set())
+
+    def test_missing_ancestors_are_discovered_until_root_is_known(self):
+        self.thread("child", "middle", active=True)
+        self.assertEqual(self.tracker.missing_parent_ids(), {"middle"})
+        self.thread("middle", "root")
+        self.assertEqual(self.tracker.missing_parent_ids(), {"root"})
+        self.thread("root")
+        self.assertEqual(self.tracker.missing_parent_ids(), set())
+        self.assertEqual(self.tracker.snapshot()["threads"][0]["id"], "root")
+
+    def test_thread_started_metadata_groups_new_subagent_immediately(self):
+        self.thread("root")
+        self.tracker.handle({"method": "thread/started", "params": {"thread": {
+            "id": "child", "parentThreadId": "root", "status": {"type": "active"},
+        }}})
+        self.assertEqual(self.tracker.snapshot()["threads"], [{"id": "root", "title": "Chat root", "tps": 0}])
+
+    def test_smoothed_tails_are_grouped_before_rounding_to_zero(self):
+        self.tracker = TpsTracker(clock=lambda: self.now)
+        self.tracker.reset(connected=True)
+        for tid, parent in (("root", None), ("child", "root")):
+            self.thread(tid, parent)
+            self.usage(tid, 0)
+            self.usage(tid, 10)
+        self.now = 23
+        self.tracker.flush()
+        self.tracker.retain_threads(set())
+        snapshot = self.tracker.snapshot()
+        self.assertEqual([r["id"] for r in snapshot["threads"]], ["root"])
+        self.assertGreater(snapshot["total_tps"], 0.05)
+        self.assertLess(snapshot["total_tps"], 0.1)
+        self.now = 60
+        self.assertEqual(self.tracker.snapshot()["threads"], [])
+
+
 class TpsSmoothingTest(unittest.TestCase):
     def setUp(self):
         self.now = 0.0
@@ -330,7 +432,11 @@ class TpsTransportTest(unittest.TestCase):
                                       "nextCursor": None if params.get("cursor") else "page2"}
                         elif method == "thread/resume":
                             tid = params["threadId"]
-                            result = {"thread": {"id": tid, "name": "Thread " + tid, "status": {"type": "active"}}}
+                            result = {"thread": {"id": tid, "name": "Thread " + tid,
+                                                 "parentThreadId": "root" if tid == "b" else None,
+                                                 "status": {"type": "active"}}}
+                        elif method == "thread/read":
+                            result = {"thread": {"id": "root", "name": "Thread root", "status": {"type": "notLoaded"}}}
                         else:
                             raise AssertionError(method)
                         frame = json.dumps({"id": message["id"], "result": result})
@@ -357,7 +463,7 @@ class TpsTransportTest(unittest.TestCase):
                         time.sleep(0.01)
                     self.assertGreater(snapshot["total_tps"], 0, monitor.error)
                     self.assertLess(snapshot["total_tps"], 2)
-                    self.assertEqual([row["title"] for row in snapshot["threads"]], ["Thread a", "Thread b"])
+                    self.assertEqual([row["title"] for row in snapshot["threads"]], ["Thread a", "Thread root"])
                 finally:
                     monitor.stop()
                 self.assertFalse(monitor._worker.is_alive())
@@ -368,6 +474,8 @@ class TpsTransportTest(unittest.TestCase):
             self.assertEqual([m["params"] for m in joins], [
                 {"threadId": "a", "excludeTurns": True}, {"threadId": "b", "excludeTurns": True},
             ])
+            reads = [m["params"] for m in calls if m["method"] == "thread/read"]
+            self.assertEqual(reads, [{"threadId": "root", "includeTurns": False}])
 
 
 if __name__ == "__main__":

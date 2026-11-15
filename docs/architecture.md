@@ -82,7 +82,9 @@ This remote plan-limit lookup is separate from token aggregation. No Codex auth 
 
 The first usage update establishes a baseline, including after reconnect, so historical usage is not reported as current output. Duplicate cumulative values do not count or restart smoothing; a lower cumulative counter establishes a new baseline without producing negative output. Batch reporting and smoothing both introduce latency. Displayed rates rise and fall gradually, measuring recently reported output rather than instantaneous token generation.
 
-The total equals the sum of displayed conversations' smoothed rates. Executing conversations remain listed when their rates reach zero; completed conversations remain until their smoothed tails reach zero. Disconnects immediately clear samples and show `-- TPS`; reconnection rediscovers loaded threads. Closing the observer connection does not stop the desktop daemon. These windows never enter the daily token cache or activity database.
+Snapshots group each thread's smoothed rate under its outermost ancestor using `parentThreadId`, so subagents never receive separate menu rows. Each thread retains an independent usage baseline, and its rate is added exactly once. Nested descendants are included; ordinary `forkedFromId` forks remain separate conversations. Rates are grouped before the zero threshold is applied. A group remains active while any member is active, even if the parent has completed. Ancestor metadata is retained while descendants are loaded or fading out; missing ancestors are read through metadata-only `thread/read` with `includeTurns: false`. `thread/started` notifications also supply ancestry for newly created subagents.
+
+The total equals the sum of displayed conversation groups' smoothed rates. Executing conversations remain listed when their rates reach zero; completed conversations remain until their smoothed tails reach zero. Disconnects immediately clear samples and show `-- TPS`; reconnection rediscovers loaded threads. Closing the observer connection does not stop the desktop daemon. These windows never enter the daily token cache or activity database.
 
 ## Status Bar Preferences
 

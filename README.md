@@ -90,7 +90,9 @@ token 小时聚合结果和按天/项目聚合结果会缓存在同一个 SQLite
 
 状态栏显示全部活跃对话的总输出 TPS，点击菜单可直接查看各对话的标题、ID 后缀与 TPS。TPS 每 5 秒刷新，先按最近 5 秒收到的输出 token 增量除以 5 计算基础速率，再做时间常数为 5 秒的指数平滑；菜单展开时也持续更新。批量上报后数值逐步上升，事件间隙平缓下降，低于 0.05 TPS 时显示 0。总 TPS 等于各对话平滑速率之和；结束的对话在平滑速率归零后移出列表。
 
-`codex_tps.py` 通过本机 Unix WebSocket 控制 socket 连接桌面已经运行的共享后端（默认 `~/.codex/app-server-control/app-server-control.sock`），每 5 秒发现已加载对话，再通过不带配置覆盖的 `thread/resume` 加入事件订阅。它不会启动新的模型任务或独立后端，也不读取历史对话正文。需要桌面已有可连接的共享控制 socket；未连接时显示 `-- TPS` 并自动重连，已连接但没有输出时显示 `0.0 TPS`。
+子代理的 TPS 沿 `parentThreadId` 父子关系合并到最外层主对话，不单独显示；多层子代理同样合并，每个线程的用量只计一次。主对话已空闲但子代理仍在执行时，菜单仍保留主对话这一行。普通分叉对话不按 `forkedFromId` 合并。
+
+`codex_tps.py` 通过本机 Unix WebSocket 控制 socket 连接桌面已经运行的共享后端（默认 `~/.codex/app-server-control/app-server-control.sock`），每 5 秒发现已加载对话，再通过不带配置覆盖的 `thread/resume` 加入事件订阅；缺少父对话元数据时通过不含历史消息的 `thread/read` 补齐归属和标题。它不会启动新的模型任务或独立后端，也不读取历史对话正文。需要桌面已有可连接的共享控制 socket；未连接时显示 `-- TPS` 并自动重连，已连接但没有输出时显示 `0.0 TPS`。
 
 实时计数读取本地 `thread/tokenUsage/updated` 的累计 `total.outputTokens`，按对话分别计算增量，包含回复文字、推理以及模型生成的工具调用。`reasoningOutputTokens` 已包含在输出总量中，不再另加；输入、缓存和工具返回内容不计入。无需 tokenizer，也不对正文流重复计数。
 
