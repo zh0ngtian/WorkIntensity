@@ -144,6 +144,27 @@ class TpsTrackerTest(unittest.TestCase):
         self.assertEqual(format_tps(0), "0.0 TPS")
         self.assertEqual(format_tps(32.36), "32.4 TPS")
 
+    def test_new_conversation_name_replaces_uuid_without_resetting_usage(self):
+        self.tracker.update_thread({"id": "a", "status": {"type": "active"}})
+        self.usage(100)
+        self.usage(120)
+        self.event("thread/name/updated", threadName="新的对话标题")
+        self.assertEqual(self.tracker.snapshot()["threads"], [
+            {"id": "a", "title": "新的对话标题", "tps": 4},
+        ])
+        self.now = 5
+        self.assertEqual(self.tracker.snapshot()["threads"][0]["tps"], 0)
+
+    def test_name_update_normalizes_title_and_ignores_missing_name(self):
+        self.event("turn/started")
+        self.event("thread/name/updated", threadName="title\n" + "x" * 60)
+        title = self.tracker.snapshot()["threads"][0]["title"]
+        self.assertEqual(title, ("title " + "x" * 60)[:48] + "…")
+        for name in (None, ""):
+            self.event("thread/name/updated", threadName=name)
+        self.event("thread/name/updated")
+        self.assertEqual(self.tracker.snapshot()["threads"][0]["title"], title)
+
 
 class SubagentTpsTest(unittest.TestCase):
     def setUp(self):
@@ -228,6 +249,19 @@ class SubagentTpsTest(unittest.TestCase):
             "id": "child", "parentThreadId": "root", "status": {"type": "active"},
         }}})
         self.assertEqual(self.tracker.snapshot()["threads"], [{"id": "root", "title": "Chat root", "tps": 0}])
+
+    def test_renamed_subagent_stays_grouped_under_renamed_parent(self):
+        self.thread("root")
+        self.thread("child", "root", active=True)
+        self.usage("child", 100)
+        self.usage("child", 120)
+        for tid, name in (("child", "Subagent name"), ("root", "Conversation name")):
+            self.tracker.handle({"method": "thread/name/updated", "params": {
+                "threadId": tid, "threadName": name,
+            }})
+        self.assertEqual(self.tracker.snapshot()["threads"], [
+            {"id": "root", "title": "Conversation name", "tps": 4},
+        ])
 
     def test_smoothed_tails_are_grouped_before_rounding_to_zero(self):
         self.tracker = TpsTracker(clock=lambda: self.now)

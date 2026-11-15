@@ -62,6 +62,9 @@ class TpsTracker:
             state = self._state(thread_id)
             if method == "thread/status/changed":
                 state["active"] = params.get("status", {}).get("type") == "active"
+            elif method == "thread/name/updated" and params.get("threadName"):
+                title = " ".join(params["threadName"].split())
+                state["title"] = title[:48] + ("…" if len(title) > 48 else "")
             elif method == "turn/started":
                 state["active"] = True
             elif method in ("turn/completed", "thread/closed"):
