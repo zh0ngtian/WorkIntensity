@@ -26,3 +26,7 @@ Use the local venv for verification:
 - Keep SQLite cache schema and iCloud backup behavior in `storage.py`.
 - Avoid changing existing `log/` contents or user activity data during tests; tests should use temporary directories/databases.
 - `.DS_Store`, `log/`, and `__pycache__/` should stay ignored.
+
+## Delivery
+
+- After completing requested changes and passing the required verification, commit and push the task-related changes directly. Do not wait for a separate push request or confirmation.
