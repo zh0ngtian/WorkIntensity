@@ -203,6 +203,65 @@ class TokenUsageAggregationTest(unittest.TestCase):
             self.assertEqual(hourly_totals[_bucket("2026-05-16T00:15:00Z")], 100)
             self.assertEqual(sum(hourly_totals.values()), 100)
 
+    def test_restored_and_forked_files_only_count_new_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, lines in {
+                "original": [
+                    _detailed_token_count_line("2026-05-15T00:00:00Z", 100000000, 100000000, 100000000),
+                ],
+                "restored": [
+                    _detailed_token_count_line("2026-05-16T00:00:00Z", 100000100, 100000100, 100),
+                    _detailed_token_count_line("2026-05-16T01:00:00Z", 100000250, 100000250, 150),
+                    _detailed_token_count_line("2026-05-16T01:01:00Z", 100000250, 100000250, 150),
+                ],
+                "fork": [
+                    _detailed_token_count_line("2026-05-16T02:00:00Z", 100000120, 100000120, 20),
+                    _detailed_token_count_line("2026-05-16T03:00:00Z", 100000155, 100000155, 35),
+                ],
+            }.items():
+                (root / f"{name}.jsonl").write_text(
+                    _session_meta_line(f"/tmp/{name}") + "\n" + "\n".join(lines) + "\n",
+                    encoding="utf-8",
+                )
+
+            result = token_usage.aggregate_hourly_token_usage([root])
+
+        self.assertEqual(result["project_daily_totals"], {
+            (_bucket("2026-05-15T00:00:00Z")[0], "original"): 100000000,
+            (_bucket("2026-05-16T00:00:00Z")[0], "restored"): 250,
+            (_bucket("2026-05-16T02:00:00Z")[0], "fork"): 55,
+        })
+        self.assertEqual(sum(result["hourly_totals"].values()), 100000305)
+
+    def test_restored_zero_usage_snapshot_only_sets_the_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "restored.jsonl"
+            path.write_text(
+                _detailed_token_count_line("2026-05-16T00:00:00Z", 100000000, 100000000, 0) + "\n"
+                + _detailed_token_count_line("2026-05-16T01:00:00Z", 100000100, 100000100, 100) + "\n",
+                encoding="utf-8",
+            )
+
+            result = token_usage.scan_token_file(path)
+
+        self.assertEqual([event[3] for event in result["events"]], [100])
+        self.assertEqual(result["previous_total"], 100000100)
+
+    def test_counter_reset_only_counts_last_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.jsonl"
+            path.write_text(
+                _detailed_token_count_line("2026-05-16T00:00:00Z", 10000, 10000, 10000) + "\n"
+                + _detailed_token_count_line("2026-05-16T01:00:00Z", 5000, 5000, 20) + "\n"
+                + _detailed_token_count_line("2026-05-16T02:00:00Z", 5030, 5030, 30) + "\n",
+                encoding="utf-8",
+            )
+
+            result = token_usage.scan_token_file(path)
+
+        self.assertEqual([event[3] for event in result["events"]], [10000, 20, 30])
+
     def test_codex_fork_replayed_token_counts_are_deduped(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -428,7 +487,7 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
             storage.refresh_token_usage_cache_if_needed(roots=[self.root])
         original_states = storage._load_token_usage_file_states(conn)
 
-        for old_version in (None, "token_usage_v4_incremental", "token_usage_v5_day_start_5", "token_usage_v6_prefix_hash_day_start_5"):
+        for old_version in (None, "token_usage_v4_incremental", "token_usage_v5_day_start_5", "token_usage_v6_prefix_hash_day_start_5", "token_usage_v7_zstd_day_start_5"):
             with self.subTest(old_version=old_version):
                 conn.execute("DELETE FROM token_usage_cache_meta WHERE key = ?", (storage._TOKEN_USAGE_VERSION_KEY,))
                 if old_version is not None:
@@ -525,6 +584,33 @@ class StorageTokenUsageCacheTest(unittest.TestCase):
             token_usage.aggregate_hourly_token_usage = original_aggregate
 
         self.assertEqual(sum(usage["2026-05-16"]), 250)
+
+    def test_incremental_restored_file_excludes_history_and_keeps_append_baseline(self):
+        self._write_jsonl([100])
+        storage.refresh_token_usage_cache_if_needed(roots=[self.root])
+        restored = self.root / "restored.jsonl"
+        restored.write_text(
+            _session_meta_line("/tmp/restored") + "\n"
+            + _detailed_token_count_line("2026-05-16T01:00:00Z", 100000020, 100000020, 20) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(token_usage, "aggregate_hourly_token_usage", side_effect=AssertionError("unexpected full rebuild")):
+            usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+            self.assertEqual(sum(usage["2026-05-16"]), 120)
+            with restored.open("a", encoding="utf-8") as file:
+                file.write(_detailed_token_count_line("2026-05-16T02:00:00Z", 100000050, 100000050, 30) + "\n")
+                file.write(_detailed_token_count_line("2026-05-16T02:01:00Z", 100000050, 100000050, 30) + "\n")
+            usage = storage.get_token_usage_by_date_range("2026-05-16", "2026-05-16", roots=[self.root])
+            self.assertEqual(sum(usage["2026-05-16"]), 150)
+            self.assertFalse(storage.refresh_token_usage_cache_if_needed(roots=[self.root]))
+
+        self.assertEqual(storage.get_token_project_usage_by_date_range("2026-05-16", "2026-05-16", refresh=False), {
+            "2026-05-16": [
+                {"project": "cache-project", "tokens": 100},
+                {"project": "restored", "tokens": 50},
+            ],
+        })
 
     def test_incremental_new_fork_preserves_global_deduplication(self):
         original = self.root / "original.jsonl"

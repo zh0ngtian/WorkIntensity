@@ -14,7 +14,7 @@ DEFAULT_CODEX_ROOTS = (
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 )
-CACHE_VERSION = f"token_usage_v7_zstd_day_start_{DAY_START_HOUR}"
+CACHE_VERSION = f"token_usage_v8_resume_baseline_day_start_{DAY_START_HOUR}"
 _UNKNOWN_PROJECT = "unknown"
 
 
@@ -268,12 +268,14 @@ def scan_token_file(
                     continue
 
                 timestamp, total_tokens, dedup_key, event_project = event
-                if previous_total is None:
+                if previous_total is None or total_tokens < previous_total:
                     delta = total_tokens
+                    last_usage = obj["payload"]["info"].get("last_token_usage")
+                    last_tokens = last_usage.get("total_tokens") if isinstance(last_usage, dict) else None
+                    if isinstance(last_tokens, int) and not isinstance(last_tokens, bool) and 0 <= last_tokens <= total_tokens:
+                        delta = last_tokens
                 elif total_tokens > previous_total:
                     delta = total_tokens - previous_total
-                elif total_tokens < previous_total:
-                    delta = total_tokens
                 else:
                     delta = 0
                 previous_total = total_tokens
