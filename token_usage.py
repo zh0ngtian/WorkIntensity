@@ -14,7 +14,7 @@ DEFAULT_CODEX_ROOTS = (
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 )
-CACHE_VERSION = f"token_usage_v8_resume_baseline_day_start_{DAY_START_HOUR}"
+CACHE_VERSION = f"token_usage_v9_event_usage_day_start_{DAY_START_HOUR}"
 _UNKNOWN_PROJECT = "unknown"
 
 
@@ -270,15 +270,18 @@ def scan_token_file(
                 timestamp, total_tokens, dedup_key, event_project = event
                 if previous_total is None or total_tokens < previous_total:
                     delta = total_tokens
-                    last_usage = obj["payload"]["info"].get("last_token_usage")
-                    last_tokens = last_usage.get("total_tokens") if isinstance(last_usage, dict) else None
-                    if isinstance(last_tokens, int) and not isinstance(last_tokens, bool) and 0 <= last_tokens <= total_tokens:
-                        delta = last_tokens
                 elif total_tokens > previous_total:
                     delta = total_tokens - previous_total
                 else:
                     delta = 0
                 previous_total = total_tokens
+
+                last_usage = obj["payload"]["info"].get("last_token_usage")
+                last_tokens = last_usage.get("total_tokens") if isinstance(last_usage, dict) else None
+                if delta > 0 and isinstance(last_tokens, int) and not isinstance(last_tokens, bool) and 0 <= last_tokens <= total_tokens:
+                    delta = last_tokens
+                    if last_usage.get("input_tokens") == 0 and last_usage.get("output_tokens") == 0:
+                        delta = 0
 
                 if delta <= 0:
                     continue
